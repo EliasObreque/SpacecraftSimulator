@@ -1,0 +1,4 @@
+jplephem~=2.14
+requests~=2.21.0
+numpy~=1.17.4
+tqdm~=4.46.0
