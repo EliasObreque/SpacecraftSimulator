@@ -10,7 +10,7 @@ class InitSubSystems(object):
         self.system_name = ['CDH', 'ADCS', 'ODCS', 'POWER', 'COMM', 'STR', 'PAYLOAD', 'TCS']
         self.file_components = properties['path_com']
 
-        self.components_name = {'ADCS': ['gyro', 'mag', 'rw', 'thruster', 'ss', 'stt', 'fss'],
+        self.components_name = {'ADCS': ['gyro', 'mag', 'rw', 'thruster', 'ss', 'stt', 'fss', 'mtt'],
                                 'CDH': ['obc'],
                                 'POWER': ['eps', 'sp', 'battery'],
                                 'ODCS': [],

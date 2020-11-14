@@ -5,6 +5,7 @@ from Components.AOCS.RWModel import RWModel
 from Components.AOCS.SunSesnor import SunSensor
 from Components.AOCS.FineSunSesnor import FineSunSensor
 from Components.Abstract.ComponentBase import ComponentBase
+from Components.AOCS.MTTModel import MTTModel
 
 
 class Components(ComponentBase):
@@ -19,6 +20,7 @@ class Components(ComponentBase):
         self.mag        = None
         self.rwmodel    = None
         self.thruster   = None
+        self.mtt        = None
         self.stt        = None
         self.sunsensors = None
         self.fss        = None
@@ -68,6 +70,10 @@ class Components(ComponentBase):
             else:
                 del self.thruster
                 self.get_list.append(None)
+            if self.data.mtt_properties is not None:
+                self.mtt = MTTModel(self.data.mtt_properties)
+            else:
+                del self.mtt
             if self.data.stt_properties is not None:
                 g = 0
             else:

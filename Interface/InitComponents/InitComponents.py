@@ -4,6 +4,7 @@ from .InitMagnetometer import InitMagnetometer
 from .InitRWModel import InitRWModel
 from .InitSunSesnor import InitSunSensor
 from .InitFineSunSensor import InitFineSunSensor
+from .InitMTT import InitMTT
 
 
 class InitComponents(object):
@@ -17,6 +18,7 @@ class InitComponents(object):
         self.sp_properties          = None
         self.battery_properties     = None
         self.thruster_properties    = None
+        self.mtt_properties         = None
         self.stt_properties         = None
         self.ss_properties          = None
         self.fss_properties         = None
@@ -49,3 +51,5 @@ class InitComponents(object):
                 self.ss_properties = InitSunSensor(path).ss_properties
             elif comp_flag[:-5] == 'fss' and properties['fss_flag']:
                 self.fss_properties = InitFineSunSensor(path).fss_properties
+            elif comp_flag[:-5] == 'mtt' and properties['mtt_flag']:
+                self.mtt_properties = InitMTT(path,  prop_step).mtt_properties

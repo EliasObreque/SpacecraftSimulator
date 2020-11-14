@@ -68,6 +68,7 @@ class ADCS(ComponentBase):
         self.tick_temp = 1
 
         self.adcs_mode = DETUMBLING
+        self.components.mtt.set_step_width(self.ctrl_cycle / 1000)
         for rw in self.components.rwmodel:
             rw.set_step_width(self.ctrl_cycle / 1000)
         self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
@@ -81,7 +82,9 @@ class ADCS(ComponentBase):
 
         self.calculate_control_torque()
 
-        self.calc_rw_torque()
+        # self.calc_rw_torque()
+
+        self.calc_mtt_torque()
         return
 
     def read_sensors(self, sc_isDark):
@@ -114,53 +117,8 @@ class ADCS(ComponentBase):
         self.rsfss_mean_b = self.eskf.get_fss_mean_vect(self.rsfss_b)
 
         # Estimate Spacecraft Attitude quaternion
-        self.eskf_process(self.ctrl_cycle/1000)
+        # self.eskf_process(self.ctrl_cycle/1000)
         return
-
-    def eskf_process(self, dt):#, gyroData, magData, dt, i):
-        """
-        * Iteration of the Fusion algorithm consist of predict of 
-        * the nominal state, prediction of the error state, update
-        * of the error estate and injection of error into nominal states
-        *
-        * @param gyroData np.array((3,1)) Gyroscope (x,y,z) noisy measurements
-        * @param magData np.array((3,1)) Magnetometer (x,y,z) noisy measurements
-        * @param dt Float Time step at which the algorithm runs
-        * @param i Int Current iteration of the algorithm
-        * @return self.eskf.q np.array((4,1)) Estimated quaternion
-        """
-
-        # Pridict state using gyro measurments
-        u = self.current_omega_c_gyro
-        self.eskf.predict_nominal(u, dt)
-        self.eskf.predict_error(u, dt)
-        # Update state at magnetometer data rate
-        if self.tick_temp%(self.components.gyro.prescalar/self.components.mag.prescalar) == 0:
-            z = unitVector(self.current_magVect_c_magSensor)
-            self.eskf.update(z, self.jacobians.Hx_mag, self.jacobians.hx_mag, self.magVect_i, "mag")
-            # self.eskf.reset()
-        # Update state at coarse sun sensor data rate
-        if self.tick_temp%(self.components.gyro.prescalar/self.components.sunsensors[0].prescalar) == 0:
-            z = unitVector(self.sunPos_est_b)
-            if np.linalg.norm(z)>0:
-                self.eskf.update(z, self.jacobians.Hx_sun, self.jacobians.hx_sun, self.sunPos_i, "css")
-                # self.eskf.reset()
-        # Update state at fine sun sensor data rate
-        # for i in range(self.number_fss):
-        #     if self.tick_temp%(self.components.gyro.prescalar/self.components.fss[i].prescalar) == 0:
-        #         z = unitVector(self.rsfss_b[i])
-        #         if np.linalg.norm(z)>0:
-        #             self.eskf.update(z, self.jacobians.Hx_sun, self.jacobians.hx_sun, self.sunPos_i, "fss")
-        #             # self.eskf.reset()
-        # Update state at mean fine sun sensor data rate
-        if self.tick_temp%(self.components.gyro.prescalar/self.components.fss[0].prescalar) == 0:
-                z = unitVector(self.rsfss_mean_b)
-                if np.linalg.norm(z)>0:
-                    self.eskf.update(z, self.jacobians.Hx_sun, self.jacobians.hx_sun, self.sunPos_i, "fss")
-                    # self.eskf.reset()
-
-        self.q_i2b_est_eskf_temp = self.eskf.q
-        self.tick_temp+=1
 
     def check_mode(self):
         if self.adcs_mode == DETUMBLING:
@@ -210,6 +168,10 @@ class ADCS(ComponentBase):
         control = self.controller.calc_control(error_, error_omega_, self.adcs_mode)
         self.control_torque = control
 
+    def calc_mtt_torque(self):
+        self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
+        return
+
     def calc_rw_torque(self):
         f = 0
         for rw in self.components.rwmodel:
@@ -228,113 +190,16 @@ class ADCS(ComponentBase):
 
     def save_data(self):
         self.historical_control.append(self.control_torque)
-        self.historical_estimation.append(self.q_i2b_est_eskf_temp())
-        self.historical_P.append(self.eskf.P)
-        self.historical_P_det.append(np.linalg.det(self.eskf.P))
         self.historical_magVect_i.append(self.magVect_i)
-        self.historical_eskf_res.append(self.eskf.y)
-        self.historical_ssEst_b.append(unitVector(self.sunPos_est_b))
-        self.historical_ssDir_b.append(self.sunDir_b)
-        self.historical_eskf_obserrmag.append(self.eskf.dtheta_mag)
-        self.historical_eskf_obserrcss.append(self.eskf.dtheta_css)
-        self.historical_fssEst_b.append(np.array(self.rsfss_b))
-        self.historical_fssQdr_d.append(np.array(self.qdrsfss_b))
-        self.historical_eskf_bias.append(self.eskf.wb)
 
     def get_log_values(self, subsys):
-        report = {'RWModel_' + subsys + '_b(X)[Nm]': 0,
-                  'RWModel_' + subsys + '_b(Y)[Nm]': 0,
-                  'RWModel_' + subsys + '_b(Z)[Nm]': 0}
-        if hasattr(self.components, 'gyro'):
-            gyro = self.components.gyro
-            report['gyro_omega_' + subsys + '_c(X)[rad/s]'] = np.array(gyro.historical_omega_c)[:, 0]
-            report['gyro_omega_' + subsys + '_c(Y)[rad/s]'] = np.array(gyro.historical_omega_c)[:, 1]
-            report['gyro_omega_' + subsys + '_c(Z)[rad/s]'] = np.array(gyro.historical_omega_c)[:, 2]
-            report['gyro_rw_' + subsys + '_c(X)[rad/s]'] = np.array(gyro.historical_rw_c_tmp)[:, 0]
-            report['gyro_rw_' + subsys + '_c(Y)[rad/s]'] = np.array(gyro.historical_rw_c_tmp)[:, 1]
-            report['gyro_rw_' + subsys + '_c(Z)[rad/s]'] = np.array(gyro.historical_rw_c_tmp)[:, 2]
-            report['gyro_nr_' + subsys + '_c(X)[rad/s]'] = np.array(gyro.historical_nr_c_tmp)[:, 0]
-            report['gyro_nr_' + subsys + '_c(Y)[rad/s]'] = np.array(gyro.historical_nr_c_tmp)[:, 1]
-            report['gyro_nr_' + subsys + '_c(Z)[rad/s]'] = np.array(gyro.historical_nr_c_tmp)[:, 2]
-        if hasattr(self.components, 'mag'):
-            mag = self.components.mag
-            report['magnetometer_vect_' + subsys + '_c(X)[T?]'] = np.array(mag.historical_magVect_c)[:, 0]
-            report['magnetometer_vect_' + subsys + '_c(Y)[T?]'] = np.array(mag.historical_magVect_c)[:, 1]
-            report['magnetometer_vect_' + subsys + '_c(Z)[T?]'] = np.array(mag.historical_magVect_c)[:, 2]
-            report['magnetometer_vect_' + subsys + '_i(X)[T?]'] = np.array(self.historical_magVect_i)[:, 0]
-            report['magnetometer_vect_' + subsys + '_i(Y)[T?]'] = np.array(self.historical_magVect_i)[:, 1]
-            report['magnetometer_vect_' + subsys + '_i(Z)[T?]'] = np.array(self.historical_magVect_i)[:, 2]
-        if hasattr(self.components, 'rwmodel'):
-            for rw in self.components.rwmodel:
-                report['RWModel_' + subsys + '_b(X)[Nm]'] += np.array(rw.historical_rw_torque_b)[:, 0]
-                report['RWModel_' + subsys + '_b(Y)[Nm]'] += np.array(rw.historical_rw_torque_b)[:, 1]
-                report['RWModel_' + subsys + '_b(Z)[Nm]'] += np.array(rw.historical_rw_torque_b)[:, 2]
-        if hasattr(self.components, 'sunsensors'):
-            ss_count = 1
-            for ss in self.components.sunsensors:
-                report['SS_(' + str(ss_count) + ')_I' + subsys + '_[uA]'] = np.array(ss.historical_I_measured)
-                ss_count += 1
-            report['SS_est_'+subsys+'_b(X)[unit]'] = np.array(self.historical_ssEst_b)[:, 0]
-            report['SS_est_'+subsys+'_b(Y)[unit]'] = np.array(self.historical_ssEst_b)[:, 1]
-            report['SS_est_'+subsys+'_b(Z)[unit]'] = np.array(self.historical_ssEst_b)[:, 2]
-            report['SS_dir_'+subsys+'_b(X)[unit]'] = np.array(self.historical_ssDir_b)[:, 0]
-            report['SS_dir_'+subsys+'_b(Y)[unit]'] = np.array(self.historical_ssDir_b)[:, 1]
-            report['SS_dir_'+subsys+'_b(Z)[unit]'] = np.array(self.historical_ssDir_b)[:, 2]
-        if hasattr(self.components, 'fss'):
-            fss_count = 1
-            for fss in self.components.fss:
-                # Voltage Ratios (Vr)
-                report['FSS_(' + str(fss_count) + ')_Vrx_' + subsys + '_[-]'] = np.array(fss.historical_V_ratio_m)[:, 0]
-                report['FSS_(' + str(fss_count) + ')_Vry_' + subsys + '_[-]'] = np.array(fss.historical_V_ratio_m)[:, 1]
-
-                report['FSS_(' + str(fss_count) + ')_xd_m_' + subsys + '_[-]'] = np.array(fss.historical_rd_m)[:, 0]
-                report['FSS_(' + str(fss_count) + ')_yd_m_' + subsys + '_[-]'] = np.array(fss.historical_rd_m)[:, 1]
-
-                report['FSS_(' + str(fss_count) + ')_rx_m_' + subsys + '_[-]'] = np.array(fss.historical_sun_vector_c)[:, 0]
-                report['FSS_(' + str(fss_count) + ')_ry_m_' + subsys + '_[-]'] = np.array(fss.historical_sun_vector_c)[:, 1]
-                report['FSS_(' + str(fss_count) + ')_rz_m_' + subsys + '_[-]'] = np.array(fss.historical_sun_vector_c)[:, 2]
-
-                report['FSS_(' + str(fss_count) + ')_theta_m_' + subsys + '_[rad]'] = np.array(fss.historical_theta_m)
-                report['FSS_(' + str(fss_count) + ')_phi_m_' + subsys + '_[rad]'] = np.array(fss.historical_phi_m)
-
-                # Sun unit vector extraction (r)
-                report['FSS_(' + str(fss_count) + ')_rx_' + subsys + '_[-]'] = np.array(self.historical_fssEst_b)[:, fss_count-1, 0]
-                report['FSS_(' + str(fss_count) + ')_ry_' + subsys + '_[-]'] = np.array(self.historical_fssEst_b)[:, fss_count-1, 1]
-                report['FSS_(' + str(fss_count) + ')_rz_' + subsys + '_[-]'] = np.array(self.historical_fssEst_b)[:, fss_count-1, 2]
-                # Sun quadrature d-frame vector 
-                # Sun unit vector extraction (r)
-                report['FSS_(' + str(fss_count) + ')_xd_' + subsys + '_[-]'] = np.array(self.historical_fssQdr_d)[:, fss_count-1, 0]
-                report['FSS_(' + str(fss_count) + ')_yd_' + subsys + '_[-]'] = np.array(self.historical_fssQdr_d)[:, fss_count-1, 1]
-                fss_count += 1
+        report = {'MTT_' + subsys + '_b(X)[Am]': 0,
+                  'MTT_' + subsys + '_b(Y)[Am]': 0,
+                  'MTT_' + subsys + '_b(Z)[Am]': 0}
 
         report_control = {'Control_' + subsys + '_b(X)[Nm]': np.array(self.historical_control)[:, 0],
                           'Control_' + subsys + '_b(Y)[Nm]': np.array(self.historical_control)[:, 1],
                           'Control_' + subsys + '_b(Z)[Nm]': np.array(self.historical_control)[:, 2]}
-        report_estimation = {subsys +'_q_estEskfTemp_i2b(0)[-]': np.array(self.historical_estimation)[:, 0],
-                          subsys +'_q_estEskfTemp_i2b(1)[-]': np.array(self.historical_estimation)[:, 1],
-                          subsys +'_q_estEskfTemp_i2b(2)[-]': np.array(self.historical_estimation)[:, 2],
-                          subsys +'_q_estEskfTemp_i2b(3)[-]': np.array(self.historical_estimation)[:, 3]}
 
-        report_estimation2 = {subsys +'_P_est(0,0)[-]': np.array(self.historical_P)[:, 0, 0],
-                          subsys +'_P_est(1,1)[-]': np.array(self.historical_P)[:, 1, 1],
-                          subsys +'_P_est(2,2)[-]': np.array(self.historical_P)[:, 2, 2],
-                          subsys +'_P_est_det[-]': np.array(self.historical_P_det)}
-
-        report_estimation3 = {subsys +'_eskfRes(X)[-]': np.array(self.historical_eskf_res)[:, 0],
-                          subsys +'_eskfRes(Y)[-]': np.array(self.historical_eskf_res)[:, 1],
-                          subsys +'_eskfRes(Z)[-]': np.array(self.historical_eskf_res)[:, 2]}
-
-        report_estimation4 = {subsys +'_eskfbias(X)[rad/s]': np.array(self.historical_eskf_bias)[:, 0],
-                          subsys +'_eskfbias(Y)[rad/s]': np.array(self.historical_eskf_bias)[:, 1],
-                          subsys +'_eskfbias(Z)[rad/s]': np.array(self.historical_eskf_bias)[:, 2]}
-
-        report_estimation3[subsys +'_eskfobserrmag(X)[rad]'] = np.array(self.historical_eskf_obserrmag)[:, 0]
-        report_estimation3[subsys +'_eskfobserrmag(Y)[rad]'] = np.array(self.historical_eskf_obserrmag)[:, 1]
-        report_estimation3[subsys +'_eskfobserrmag(Z)[rad]'] = np.array(self.historical_eskf_obserrmag)[:, 2]
-
-        report_estimation3[subsys +'_eskfobserrcss(X)[rad]'] = np.array(self.historical_eskf_obserrcss)[:, 0]
-        report_estimation3[subsys +'_eskfobserrcss(Y)[rad]'] = np.array(self.historical_eskf_obserrcss)[:, 1]
-        report_estimation3[subsys +'_eskfobserrcss(Z)[rad]'] = np.array(self.historical_eskf_obserrcss)[:, 2]
-
-        report = {**report, **report_control, **report_estimation, **report_estimation2, **report_estimation3, **report_estimation4}
+        report = {**report, **report_control}
         return report

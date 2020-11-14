@@ -30,7 +30,7 @@ class MainSimulation(InitialConfig, Logger):
 
         self.simtime = SimTime(self.time_properties)
         self.spacecraft = Spacecraft(self.spacecraft_properties, self.components_properties, self.simtime)
-        self.groundstation = GroundStation(self.groundstation_properties, self.spacecraft.dynamics)
+        self.groundstation = GroundStation(self.groundstation_properties, self.spacecraft.dynamics, self.simtime)
 
         self.environment = Environment(self.environment_properties)
         self.disturbance = Disturbances(self.disturbance_properties, self.environment, self.spacecraft)
@@ -47,6 +47,9 @@ class MainSimulation(InitialConfig, Logger):
         while self.simtime.maincountTime <= self.simtime.endsimTime:
             # spacecraft update
             self.spacecraft.update()
+
+            # ground track update
+            self.groundstation.update()
 
             # current Environment and disturbances
             self.environment.update(self.simtime.current_decyaer, self.spacecraft.dynamics)
