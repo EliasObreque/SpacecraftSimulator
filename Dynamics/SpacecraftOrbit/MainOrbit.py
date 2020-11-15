@@ -35,6 +35,7 @@ class MainOrbit(object):
         self.historical_longs       = []
         self.historical_alts        = []
         self.acc_i                  = np.array([0, 0, 0])
+        self.set_propagator()
 
     def set_propagator(self):
         if self.propagation_properties['propagate_mode'] == 0:
@@ -52,7 +53,7 @@ class MainOrbit(object):
             print('3')
 
     def update_orbit(self, current_jd):
-        self.current_position_i, self.current_velocity_i = self.propagator_model.update_state(current_jd)
+        self.current_position_i, self.current_velocity_i = self.propagator_model.update_state_orbit(current_jd)
 
     def update_attitte(self, q_i2b):
         self.current_velocity_b = q_i2b.frame_conv(self.current_velocity_i)

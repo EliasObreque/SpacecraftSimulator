@@ -56,13 +56,14 @@ class ADCS(ComponentBase):
         self.q_i2b_est_eskf_temp = Quaternions([0, 0, 0, 1])
         self.q_b2b_now2tar = Quaternions([0, 0, 0, 1])
         self.q_i2b_tar = Quaternions([0, 0, 0, 1])
-        self.eskf = ErrorStateKalmanFilter(dim_x=7, dim_dx=6, dim_u=3, dim_z=3, inertia=self.dynamics.attitude.Inertia, invInertia=self.dynamics.attitude.inv_Inertia)
+        self.eskf = ErrorStateKalmanFilter(dim_x=7, dim_dx=6, dim_u=3, dim_z=3, inertia=self.dynamics.attitude.Inertia,
+                                           invInertia=self.dynamics.attitude.inv_Inertia)
         self.jacobians = Jacobians()
         self.number_ss = len(self.components.sunsensors)
         self.number_fss = len(self.components.fss)
         self.current_I_sunsensors = np.zeros(self.number_ss)
         self.V_ratios_fss = np.zeros((self.number_fss, 2))
-        self.params_fss = [None]*self.number_fss
+        self.params_fss = [None] * self.number_fss
         self.rsfss_b = np.zeros((self.number_fss, 3))
         self.qdrsfss_b = np.zeros((self.number_fss, 2))
         self.tick_temp = 1
@@ -71,7 +72,10 @@ class ADCS(ComponentBase):
         self.components.mtt.set_step_width(self.ctrl_cycle / 1000)
         for rw in self.components.rwmodel:
             rw.set_step_width(self.ctrl_cycle / 1000)
-        self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
+
+        # self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
+        control_parameters = {'N_pred_horiz': 3}
+        self.controller = Controller().mpc(self.dynamics, control_parameters, self.ctrl_cycle)
 
     def main_routine(self, count, sc_isDark):
         self.read_sensors(sc_isDark)
@@ -84,7 +88,7 @@ class ADCS(ComponentBase):
 
         # self.calc_rw_torque()
 
-        self.calc_mtt_torque()
+        # self.calc_mtt_torque()
         return
 
     def read_sensors(self, sc_isDark):
@@ -123,7 +127,7 @@ class ADCS(ComponentBase):
     def check_mode(self):
         if self.adcs_mode == DETUMBLING:
             self.omega_b_tar = np.array([0.0, 0.0, 0.0])
-            self.controller.set_gain(self.P_omega, self.I_quat, np.diag([0.0, 0.0, 0.0]))
+            #self.controller.set_gain(self.P_omega, self.I_quat, np.diag([0.0, 0.0, 0.0]))
         elif self.adcs_mode == NAD_POINT:
             print('Nadir pointing mode...')
         elif self.adcs_mode == REF_POINT:
@@ -165,8 +169,15 @@ class ADCS(ComponentBase):
 
         error_omega_ = self.omega_b_tar - self.omega_b_est
         error_ = angle_rotation * torque_direction
-        control = self.controller.calc_control(error_, error_omega_, self.adcs_mode)
-        self.control_torque = control
+
+        self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+                                   self.dynamics.attitude.current_omega_b,
+                                   self.control_torque],
+                                  self.dynamics.simtime.current_jd)
+
+        #control = self.controller.calc_control(error_, error_omega_, self.adcs_mode)
+
+        self.control_torque = np.zeros(3)
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)

@@ -52,7 +52,7 @@ class EarthCenterOrbit(object):
         self.satellite = twoline2rv(self.line1, self.line2, self.wgs)
         self.tolerance = 1e-10  # rad
 
-    def update_state(self, current_jd):
+    def update_state_orbit(self, current_jd):
         position_i, velocity_i = self.satellite.propagate(j=current_jd)
         self.position_i = np.array(position_i) * 1000
         self.velocity_i = np.array(velocity_i) * 1000

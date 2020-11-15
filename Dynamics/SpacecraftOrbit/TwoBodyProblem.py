@@ -12,7 +12,7 @@ class TwoBodyProblem(object):
         self.step_width = timestep
         self.current_time = 0
 
-    def update_state(self, time_array):
+    def update_state_orbit(self, time_array):
         self.rungeonestep()
         return self.position_i, self.velocity_i
 

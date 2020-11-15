@@ -40,7 +40,6 @@ class MainSimulation(InitialConfig, Logger):
         self.filename = date.strftime('%Y-%m-%d %H-%M-%S')
 
     def run_simulation(self):
-        self.spacecraft.dynamics.orbit.set_propagator()
         # Loop
         self.simtime.reset_countTime()
         print('Simulation running...')

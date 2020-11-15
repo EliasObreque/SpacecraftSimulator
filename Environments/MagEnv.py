@@ -14,11 +14,17 @@ class MagEnv(object):
         self.calcmagflag = True
         self.envir_flag = mag_properties['mag_calculation']
 
-    def update(self, dynamics, decyear):
-        sideral  = dynamics.ephemeris.selected_body['EARTH'].current_sideral
-        lat = dynamics.orbit.current_lat
-        lon = dynamics.orbit.current_long
-        alt = dynamics.orbit.current_alt
+    def update(self, dynamics, decyear, sideral=None, geocen=None):
+        if sideral is None:
+            sideral  = dynamics.ephemeris.selected_body['EARTH'].current_sideral
+        if geocen is None:
+            lat = dynamics.orbit.current_lat
+            lon = dynamics.orbit.current_long
+            alt = dynamics.orbit.current_alt
+        else:
+            lat = geocen[0]
+            lon = geocen[1]
+            alt = geocen[2]
         q_i2b = dynamics.attitude.current_quaternion_i2b
         self.calc_mag(decyear, sideral, lat, lon, alt, q_i2b)
 

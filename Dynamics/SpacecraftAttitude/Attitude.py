@@ -44,7 +44,7 @@ class Attitude(object):
 
     def update_attitude(self, current_simtime):
         if self.attitude_update_flag:
-            while np.abs(current_simtime - self.attitudecountTime - self.attitudestep) > 1e-6:
+            while current_simtime - self.attitudecountTime - self.attitudestep > 1e-6:
                 self.rungeonestep(self.attitudecountTime, self.attitudestep)
                 self.attitudecountTime += self.attitudestep
             self.rungeonestep(self.attitudecountTime, self.attitudestep)

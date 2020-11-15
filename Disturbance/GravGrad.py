@@ -23,7 +23,7 @@ class GravGrad(object):
     def update(self, environment, spacecraft):
         temp = spacecraft.dynamics.ephemeris
         self.calc_torque_b(temp.selected_body[temp.center_object].current_pos_from_sc_b,
-                           spacecraft.dynamics.attitude.Inertia)
+                           spacecraft.dynamics.attitude.mpc_inertia)
 
     def calc_torque_b(self, r_b, Inertia_b):
         norm_r_b = np.linalg.norm(r_b)
