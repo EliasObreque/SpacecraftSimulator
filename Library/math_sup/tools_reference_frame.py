@@ -6,11 +6,16 @@ Created on Sat Jan 18 14:34:09 2020
 """
 import numpy as np
 
-R_earth = 6378.1350
 mu = 3.986044418e5
 twopi = 2.0 * np.pi
 deg2rad = np.pi / 180.0
 omega_earth = 7.2921150 * 1e-5  # rad/s
+a2 = 40680631.6     # Equatorial radius
+b2 = 40408296.0     # Polar radius
+radius_earth = 6378.137  # km
+earth_flat = 1.0 / 298.257223563
+earth_e2 = earth_flat * (2 - earth_flat)
+geod_tolerance = 1e-10  # rad
 
 
 def rotationY(bfr, theta):
@@ -19,6 +24,37 @@ def rotationY(bfr, theta):
     temp[1] = bfr[1]
     temp[2] = np.sin(theta)*bfr[0] + np.cos(theta)*bfr[2]
     return temp
+
+
+def eci_to_geodetic(current_position_i, current_sideral):
+    r = np.sqrt(current_position_i[0] ** 2 + current_position_i[1] ** 2)
+    long = fmod2(np.arctan2(current_position_i[1], current_position_i[0]) - current_sideral)
+    lat = np.arctan2(current_position_i[2], r)
+    flag_iteration = True
+    c = 1
+    while flag_iteration:
+        phi = lat
+        c = 1 / np.sqrt(1 - earth_e2 * np.sin(phi) * np.sin(phi))
+        lat = np.arctan2(current_position_i[2] + radius_earth * c
+                         * earth_e2 * np.sin(phi) * 1000, r)
+        if (np.abs(lat - phi)) <= geod_tolerance:
+            flag_iteration = False
+
+    alt = r / np.cos(lat) - radius_earth * c * 1000  # *metros
+
+    if lat > np.pi / 2:
+        lat -= twopi
+    return alt, long, lat
+
+
+def geodetic_to_ecef(tar_alt, tar_long, tar_lat):
+    a2cos2 = a2 * np.cos(tar_lat) ** 2
+    b2sin2 = b2 * np.sin(tar_lat) ** 2
+    N = a2/np.sqrt(a2cos2 + b2sin2)
+    x = (N + tar_alt) * np.cos(tar_lat) * np.cos(tar_long)
+    y = (N + tar_alt) * np.cos(tar_lat) * np.sin(tar_long)
+    z = (N * b2 / a2 + tar_alt) * np.sin(tar_lat)
+    return np.array([x, y, z])
 
 
 def rotationZ(bfr, theta):

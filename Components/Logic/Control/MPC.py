@@ -11,16 +11,18 @@ from copy import deepcopy, copy
 from Library.math_sup.tools_reference_frame import JdToDecyear
 from Library.igrf.IGRF import calculate_igrf
 from Library.math_sup.Quaternion import Quaternions
-from Library.math_sup.tools_reference_frame import gstime
-from Library.math_sup.tools_reference_frame import fmod2
-from Library.math_sup.tools_reference_frame import rotationY, rotationZ
+from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
 twopi = np.pi * 2
+deg2rad = np.pi / 180.0
+rad2deg = 1 / deg2rad
 #  ------------ wgs-84 constants ------------
 radius_earth = 6378.137  # km
 earth_flat = 1.0 / 298.257223563
 earth_e2 = earth_flat * (2 - earth_flat)
 geod_tolerance = 1e-10  # rad
+a2 = 40680631.6     # Equatorial radius
+b2 = 40408296.0     # Polar radius
 
 
 class MPC(object):
@@ -42,6 +44,14 @@ class MPC(object):
         self.mpc_sim_step_prop = dynamics.simtime.stepsimTime
         self.mpc_ctrl_cycle = ctrl_cycle
 
+        # Target: Antenna Santaigo
+        tar_alt = 572           # m
+        tar_long = -70.6506     # degree
+        tar_lat = -33.4372      # degree
+
+        # Geodetic to ECEF
+        self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
+
     def open_loop(self, current_att_state, current_jd):
         # Current state
         self.mpc_current_quaternion_i2b = current_att_state[0]
@@ -51,15 +61,14 @@ class MPC(object):
         self.mpc_start_jd = current_jd
         self.mpc_main_count_time = 0
 
-        #self.mpc_current_h_total_b, h_total_i = self.calangmom(self.mpc_current_omega_b,
-        #                                                       self.mpc_current_quaternion_i2b)
-
         last_omega_b = self.mpc_current_omega_b
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
         last_torque_b = self.mpc_current_torque_b
 
         last_pos_i, last_vel_i = self.mpc_dynamics_orb.update_state_orbit(current_jd)
         last_sideral = gstime(current_jd)
+        last_tar_pos_eci = rotationZ(self.tar_pos_ecef, last_sideral)
+        last_rel_vector = last_tar_pos_eci - last_pos_i
 
         for i in range(self.N_pred_horiz):
             self.mpc_main_count_time += self.mpc_sim_step_prop
@@ -74,43 +83,26 @@ class MPC(object):
 
             current_position_i, current_velocity_i = self.mpc_dynamics_orb.update_state_orbit(self.mpc_future_jd)
             current_sideral = gstime(self.mpc_future_jd)
+            current_tar_pos_eci = rotationZ(self.tar_pos_ecef, last_sideral)
 
             # ECI to Geodetic state
-            alt, long, lat = self.eci_to_geodetic(current_position_i, current_sideral)
+            alt, long, lat = eci_to_geodetic(current_position_i, current_sideral)
 
             # Get Earth magnetic field
             mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
             #print(mag_b, ', Paso:', i + 1)
 
             # Control
+            current_tar_pos_b = current_q_i2b.frame_conv(current_tar_pos_eci)
+
             current_torque_b = np.zeros(3)
 
             # Save last data
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
             last_torque_b = current_torque_b
-
+            last_tar_pos_eci = current_tar_pos_eci
         return
-
-    def eci_to_geodetic(self, current_position_i, current_sideral):
-        r = np.sqrt(current_position_i[0] ** 2 + current_position_i[1] ** 2)
-        long = fmod2(np.arctan2(current_position_i[1], current_position_i[0]) - current_sideral)
-        lat = np.arctan2(current_position_i[2], r)
-        flag_iteration = True
-        c = 1
-        while flag_iteration:
-            phi = lat
-            c = 1 / np.sqrt(1 - earth_e2 * np.sin(phi) * np.sin(phi))
-            lat = np.arctan2(current_position_i[2] + radius_earth * c
-                             * earth_e2 * np.sin(phi) * 1000, r)
-            if (np.abs(lat - phi)) <= geod_tolerance:
-                flag_iteration = False
-
-        alt = r / np.cos(lat) - radius_earth * c * 1000  # *metros
-
-        if lat > np.pi / 2:
-            lat -= twopi
-        return alt, long, lat
 
     def mag_ned_to_eci(self, mag_0, theta, lonrad, gmst):
         mag_local_0y = rotationY(mag_0, np.pi - theta)
@@ -175,12 +167,6 @@ class MPC(object):
         q_i2b = Quaternions(next_x[3:])
         q_i2b.normalize()
         return q_i2b, omega_b
-
-    def calangmom(self, current_omega_b, current_quaternion_i2b):
-        h_total_b = self.mpc_inertia.dot(current_omega_b)
-        q_b2i = Quaternions(current_quaternion_i2b.conjugate())
-        h_total_i = q_b2i.frame_conv(h_total_b)
-        return h_total_b, h_total_i
 
     def skewsymmetricmatrix(self, x_omega_b):
         s_omega = np.zeros((3, 3))
