@@ -104,6 +104,74 @@ class MPC(object):
             last_tar_pos_eci = current_tar_pos_eci
         return
 
+    def closed_loop(self, current_att_state, current_jd):
+        # Current state
+        self.mpc_current_quaternion_i2b = current_att_state[0]
+        self.mpc_current_omega_b = current_att_state[1]
+        self.mpc_current_torque_b = current_att_state[2]
+
+        self.mpc_start_jd = current_jd
+        self.mpc_main_count_time = 0
+
+
+        # Llamar a la función de optimización
+        u = [[0, 1, 2], [2, 3, 5], [4, 5, 6]]
+
+        j = self.objetive_function(u)
+
+        return u[1]
+
+    def objetive_function(self, u):
+
+        J = 0
+
+        last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
+        last_omega_b = self.mpc_current_omega_b
+        current_torque_b = self.mpc_current_torque_b
+
+        last_pos_i, last_vel_i = self.mpc_dynamics_orb.update_state_orbit(self.mpc_start_jd)
+        last_sideral = gstime(self.mpc_start_jd)
+        last_tar_pos_eci = rotationZ(self.tar_pos_ecef, last_sideral)
+        last_rel_vector = last_tar_pos_eci - last_pos_i
+
+        for i in range(self.N_pred_horiz):
+
+            J += self.euclidea_dist(u[i], current_torque_b)
+
+            current_torque_b = u[i]
+
+            self.mpc_main_count_time += self.mpc_sim_step_prop
+
+            self.mpc_future_jd = self.mpc_start_jd + self.mpc_main_count_time * inv_sec_day
+            mpc_decyear = JdToDecyear(self.mpc_future_jd)
+
+            # Dynamics update
+            current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
+                                                                      last_quaternion_q_i2b,
+                                                                      current_torque_b)
+
+            current_position_i, current_velocity_i = self.mpc_dynamics_orb.update_state_orbit(self.mpc_future_jd)
+            current_sideral = gstime(self.mpc_future_jd)
+            current_tar_pos_eci = rotationZ(self.tar_pos_ecef, last_sideral)
+
+            # ECI to Geodetic state
+            alt, long, lat = eci_to_geodetic(current_position_i, current_sideral)
+
+            # Get Earth magnetic field
+            mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
+            #print(mag_b, ', Paso:', i + 1)
+
+            # Control
+            current_tar_pos_b = current_q_i2b.frame_conv(current_tar_pos_eci)
+
+
+            # Save last data
+            last_omega_b = current_omega_b
+            last_quaternion_q_i2b = current_q_i2b
+            last_tar_pos_eci = current_tar_pos_eci
+
+        return J
+
     def mag_ned_to_eci(self, mag_0, theta, lonrad, gmst):
         mag_local_0y = rotationY(mag_0, np.pi - theta)
         mag_local_yz = rotationZ(mag_local_0y, -lonrad)
@@ -196,3 +264,7 @@ class MPC(object):
         Omega[3, 1] = -x_omega_b[1]
         Omega[3, 2] = -x_omega_b[2]
         return Omega
+
+    def euclidea_dist(self, x, y):
+        return np.sqrt((x[0]-y[0])**2+(x[1]-y[1])**2+(x[1]-y[1])**2)
+
