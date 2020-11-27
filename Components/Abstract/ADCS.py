@@ -170,14 +170,23 @@ class ADCS(ComponentBase):
         error_omega_ = self.omega_b_tar - self.omega_b_est
         error_ = angle_rotation * torque_direction
 
+        """
         self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
                                    self.dynamics.attitude.current_omega_b,
                                    self.control_torque],
                                   self.dynamics.simtime.current_jd)
+        self.control_torque = np.zeros(3)
+        """
+
+        self.control_torque = self.controller.closed_loop([self.dynamics.attitude.current_quaternion_i2b,
+                                                            self.dynamics.attitude.current_omega_b,
+                                                            self.control_torque],
+                                                            self.dynamics.simtime.current_jd)
+
 
         #control = self.controller.calc_control(error_, error_omega_, self.adcs_mode)
 
-        self.control_torque = np.zeros(3)
+
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
