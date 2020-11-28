@@ -51,6 +51,9 @@ class MPC(object):
 
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
+        # Vector direction of the Body frame to point to another vector
+        self.b_dir = np.array([0, 0, 1])
+        self.q_b2b_now2tar = Quaternions([0, 0, 0, 1])
 
     def open_loop(self, current_att_state, current_jd):
         # Current state
@@ -93,7 +96,16 @@ class MPC(object):
             #print(mag_b, ', Paso:', i + 1)
 
             # Control
+            # Error determination
+
             current_tar_pos_b = current_q_i2b.frame_conv(current_tar_pos_eci)
+            b_tar_b = current_tar_pos_b/np.linalg.norm(current_tar_pos_b)
+            theta_e = np.arccos(np.dot(self.b_dir, b_tar_b))
+            vec_u_e = np.cross(self.b_dir, b_tar_b)
+            vec_u_e /= np.linalg.norm(vec_u_e)
+            self.q_b2b_now2tar.setquaternion([vec_u_e, theta_e])
+            self.q_b2b_now2tar.normalize()
+            self.q_i2b_tar = current_q_i2b * self.q_b2b_now2tar
 
             current_torque_b = np.zeros(3)
 
