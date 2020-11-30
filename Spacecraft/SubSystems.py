@@ -45,7 +45,7 @@ class SubSystems(InitSubSystems):
         if self.subsystems['ADCS'] is not None:
             return self.subsystems['ADCS'].get_rwtorque()
         else:
-            return np.zeros(3)
+            return self.subsystems['ADCS'].control_torque
 
     def generate_force_b(self):
         if self.subsystems['ODCS'] is not None:
