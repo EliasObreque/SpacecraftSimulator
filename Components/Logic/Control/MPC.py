@@ -12,6 +12,9 @@ from Library.math_sup.tools_reference_frame import JdToDecyear
 from Library.igrf.IGRF import calculate_igrf
 from Library.math_sup.Quaternion import Quaternions
 from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
+from scipy.optimize import minimize, fmin
+
+
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
 twopi = np.pi * 2
 deg2rad = np.pi / 180.0
@@ -126,12 +129,11 @@ class MPC(object):
         self.mpc_main_count_time = 0
 
 
-        # Llamar a la función de optimización
-        u = [[0, 1, 2], [2, 3, 5], [4, 5, 6]]
+        x0 = np.array([[0, 0, 0], [0, 0, 0], [0, 0, 0]])
+        res = minimize(self.objetive_function, x0, method='nelder-mead',
+                       options={'xatol': 1e-8, 'disp': True})
 
-        j = self.objetive_function(u)
-
-        return u[1]
+        return res.x[0:3]
 
     def objetive_function(self, u):
 
@@ -147,10 +149,10 @@ class MPC(object):
         last_rel_vector = last_tar_pos_eci - last_pos_i
 
         for i in range(self.N_pred_horiz):
+            # urrent_torque_b * np.identity(3) * np.transpose(current_torque_b)
+            J += 0.1 * self.euclidea_dist(u[i*3:(i+1)*3], current_torque_b)**2
 
-            J += self.euclidea_dist(u[i], current_torque_b)
-
-            current_torque_b = u[i]
+            current_torque_b = u[i*3:(i+1)*3]
 
             self.mpc_main_count_time += self.mpc_sim_step_prop
 
@@ -173,8 +175,19 @@ class MPC(object):
             mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
             #print(mag_b, ', Paso:', i + 1)
 
+
             # Control
+            # Error determination
             current_tar_pos_b = current_q_i2b.frame_conv(current_tar_pos_eci)
+            b_tar_b = current_tar_pos_b/np.linalg.norm(current_tar_pos_b)
+            theta_e = np.arccos(np.dot(self.b_dir, b_tar_b))
+            vec_u_e = np.cross(self.b_dir, b_tar_b)
+            vec_u_e /= np.linalg.norm(vec_u_e)
+            self.q_b2b_now2tar.setquaternion([vec_u_e, theta_e])
+            self.q_b2b_now2tar.normalize()
+            self.q_i2b_tar = current_q_i2b * self.q_b2b_now2tar
+
+            J += 0.1* theta_e ** 2
 
 
             # Save last data
