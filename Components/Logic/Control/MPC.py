@@ -12,7 +12,8 @@ from Library.math_sup.tools_reference_frame import JdToDecyear
 from Library.igrf.IGRF import calculate_igrf
 from Library.math_sup.Quaternion import Quaternions
 from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
-from scipy.optimize import minimize, fmin
+from scipy.optimize import minimize
+from scipy.optimize import  Bounds
 
 
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
@@ -128,8 +129,11 @@ class MPC(object):
         self.mpc_main_count_time = 0
 
         x0 = np.zeros(self.N_pred_horiz)
-        res = minimize(self.objetive_function, x0, method='nelder-mead',
-                       options={'xatol': 1e-8, 'disp': True})
+        xl = np.zeros(self.N_pred_horiz)
+        xu = 0.34*np.ones(self.N_pred_horiz)
+        bounds = Bounds(xl, xu)
+        res = minimize(self.objetive_function, x0, method='trust-constr',
+                       options={'verbose': 1}, bounds=bounds)
 
         return res.x[0]
 
