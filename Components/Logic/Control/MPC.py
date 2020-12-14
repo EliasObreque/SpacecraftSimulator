@@ -13,7 +13,7 @@ from Library.igrf.IGRF import calculate_igrf
 from Library.math_sup.Quaternion import Quaternions
 from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
 from scipy.optimize import minimize
-from scipy.optimize import  Bounds
+from scipy.optimize import Bounds
 
 
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
@@ -59,7 +59,7 @@ class MPC(object):
         self.b_dir = np.array([0, 0, 1])
         self.q_b2b_now2tar = Quaternions([0, 0, 0, 1])
 
-    def open_loop(self, current_att_state, current_jd):
+    def open_loop1(self, current_att_state, current_jd):
         # Current state
         self.mpc_current_quaternion_i2b = current_att_state[0]
         self.mpc_current_omega_b = current_att_state[1]
@@ -119,7 +119,7 @@ class MPC(object):
             last_tar_pos_eci = current_tar_s2tar_i
         return
 
-    def closed_loop(self, current_att_state, current_jd):
+    def open_loop(self, current_att_state, current_jd):
         # Current state
         self.mpc_current_quaternion_i2b = current_att_state[0]
         self.mpc_current_omega_b = current_att_state[1]
@@ -128,9 +128,9 @@ class MPC(object):
         self.mpc_start_jd = current_jd
         self.mpc_main_count_time = 0
 
-        x0 = np.zeros(self.N_pred_horiz)
+        x0 = np.zeros(self.N_pred_horiz)+1
         xl = np.zeros(self.N_pred_horiz)
-        xu = 0.34*np.ones(self.N_pred_horiz)
+        xu = 1e-3*np.ones(self.N_pred_horiz)
         bounds = Bounds(xl, xu)
         res = minimize(self.objetive_function, x0, method='trust-constr',
                        options={'verbose': 1}, bounds=bounds)
@@ -138,7 +138,6 @@ class MPC(object):
         return res.x[0]
 
     def objetive_function(self, u):
-
         J = 0
 
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
@@ -157,7 +156,8 @@ class MPC(object):
         vec_u_e /= np.linalg.norm(vec_u_e)
 
         for i in range(self.N_pred_horiz):
-            # urrent_torque_b * np.identity(3) * np.transpose(current_torque_b)
+            print('Paso: ', i, 'Calculado')
+            # current_torque_b * np.identity(3) * np.transpose(current_torque_b)
             # J += 0.1 * self.euclidea_dist(u[i*3:(i+1)*3], current_torque_b)**2
             J += 0.1 * theta_e**2 + 0.1 * u[i]**2 + 0.1 * (u[i] - last_mag_torque_b)**2
             current_torque_b = u[i] * vec_u_e

@@ -6,13 +6,14 @@ from ..Logic.Estimation.error_state_kalman_filter.ESKF import ErrorStateKalmanFi
 from ..Logic.Estimation.error_state_kalman_filter.jacobians import Jacobians
 from Library.math_sup.tools_reference_frame import unitVector
 import numpy as np
+import time
 from Library.math_sup.tools_reference_frame import geodetic_to_ecef, gstime, rotationZ
 
 REF_POINT = 2
 NAD_POINT = 1
 DETUMBLING = 0
 GSPOINT = 3
-# Target: Antenna Santaigo
+# Target: Antenna Santiago
 tar_alt = 572  # m
 tar_long = -70.6506  # degree
 tar_lat = -33.4372  # degree
@@ -42,6 +43,8 @@ class ADCS(ComponentBase):
         self.sunPos_est_b = np.zeros(3)
         self.torque_rw_b = np.zeros(3)
         self.omega_b_est = np.zeros(3)
+        self.b_dir = np.zeros(3)
+        self.b_tar_b = np.zeros(3)
         self.control_torque = np.zeros(3)
         self.historical_control = []
         self.historical_estimation = []
@@ -58,6 +61,9 @@ class ADCS(ComponentBase):
         self.historical_eskf_obserrcss = []
         self.historical_eskf_bias = []
         self.historical_theta_e = []
+        self.historical_b_tar_b = []
+        self.historical_b_dir_b = []
+        self.historical_vec_dir_tar_b = []
         self.current_theta_e = 0
         self.vec_u_e = np.zeros(3)
         self.P_omega = subsystem_setting['P_omega']
@@ -98,7 +104,7 @@ class ADCS(ComponentBase):
 
         self.determine_attitude()
 
-        self.calculate_control_torque()
+        # self.calculate_control_torque()
 
         # self.calc_rw_torque()
 
@@ -141,7 +147,7 @@ class ADCS(ComponentBase):
     def check_mode(self):
         if self.adcs_mode == DETUMBLING:
             self.omega_b_tar = np.array([0.0, 0.0, 0.0])
-            #self.controller.set_gain(self.P_omega, self.I_quat, np.diag([0.0, 0.0, 0.0]))
+            # self.controller.set_gain(self.P_omega, self.I_quat, np.diag([0.0, 0.0, 0.0]))
         elif self.adcs_mode == NAD_POINT:
             print('Nadir pointing mode...')
         elif self.adcs_mode == REF_POINT:
@@ -166,15 +172,15 @@ class ADCS(ComponentBase):
             self.q_i2b_tar = self.q_i2b_est * self.q_b2b_now2tar
         elif self.adcs_mode == GSPOINT:
             # Vector direction of the Body frame to point to another vector
-            b_dir = np.array([0, 0, 1])
+            self.b_dir = np.array([0, 0, 1])
             # Error
             current_sideral = gstime(self.dynamics.simtime.current_jd)
             current_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, current_sideral)
             current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
             current_tar_pos_b = self.dynamics.attitude.current_quaternion_i2b.frame_conv(current_tar_s2tar_i)
-            b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
-            self.current_theta_e = np.arccos(np.dot(b_dir, b_tar_b))
-            self.vec_u_e = np.cross(b_dir, b_tar_b)
+            self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
+            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
+            self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
             self.vec_u_e /= np.linalg.norm(self.vec_u_e)
         else:
             print('No mode selected')
@@ -193,22 +199,16 @@ class ADCS(ComponentBase):
 
         angle_rotation = 2 * np.arccos(q_i2b_now2tar()[3])
 
-        #error_omega_ = self.omega_b_tar - self.omega_b_est
-        #error_ = angle_rotation * torque_direction
+        # error_omega_ = self.omega_b_tar - self.omega_b_est
+        # error_ = angle_rotation * torque_direction
 
-        """
-        self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                   self.dynamics.attitude.current_omega_b,
-                                   self.control_torque],
-                                  self.dynamics.simtime.current_jd)
-        self.control_torque = np.zeros(3)
-        """
+        start_time = time.time()
+        control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+                                                        self.dynamics.attitude.current_omega_b,
+                                                        self.control_torque], self.dynamics.simtime.current_jd)
 
-        self.control_torque = self.controller.closed_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                                            self.dynamics.attitude.current_omega_b,
-                                                            self.control_torque],
-                                                            self.dynamics.simtime.current_jd)
-        self.control_torque *= self.vec_u_e
+        print('Tiempo de calculo: ', time.time() - start_time)
+        self.control_torque = control_mag_torque * self.vec_u_e
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
@@ -234,6 +234,9 @@ class ADCS(ComponentBase):
         self.historical_control.append(self.control_torque)
         self.historical_magVect_i.append(self.magVect_i)
         self.historical_theta_e.append(self.current_theta_e)
+        self.historical_b_tar_b.append(self.b_tar_b)
+        self.historical_b_dir_b.append(self.b_dir)
+        self.historical_vec_dir_tar_b.append(self.vec_u_e)
 
     def get_log_values(self, subsys):
         report = {'MTT_' + subsys + '_b(X)[Am]': 0,
@@ -243,6 +246,15 @@ class ADCS(ComponentBase):
         report_control = {'Control_' + subsys + '_b(X)[Nm]': np.array(self.historical_control)[:, 0],
                           'Control_' + subsys + '_b(Y)[Nm]': np.array(self.historical_control)[:, 1],
                           'Control_' + subsys + '_b(Z)[Nm]': np.array(self.historical_control)[:, 2]}
-        report_theta_e = {'Theta_e': np.array(self.historical_theta_e)}
-        report = {**report, **report_control, **report_theta_e}
+        report_target_state = {'Theta_error [rad]': np.array(self.historical_theta_e),
+                               'Vector_dir_b(X) [-]': np.array(self.historical_b_dir_b)[:, 0],
+                               'Vector_dir_b(Y) [-]': np.array(self.historical_b_dir_b)[:, 1],
+                               'Vector_dir_b(Z) [-]': np.array(self.historical_b_dir_b)[:, 2],
+                               'Vector_tar_b(X) [-]': np.array(self.historical_b_tar_b)[:, 0],
+                               'Vector_tar_b(Y) [-]': np.array(self.historical_b_tar_b)[:, 1],
+                               'Vector_tar_b(Z) [-]': np.array(self.historical_b_tar_b)[:, 2],
+                               'Vector_dir_tar_b(X) [-]': np.array(self.historical_vec_dir_tar_b)[:, 0],
+                               'Vector_dir_tar_b(Y) [-]': np.array(self.historical_vec_dir_tar_b)[:, 1],
+                               'Vector_dir_tar_b(Z) [-]': np.array(self.historical_vec_dir_tar_b)[:, 2]}
+        report = {**report, **report_control, **report_target_state}
         return report
