@@ -14,6 +14,7 @@ from Library.math_sup.Quaternion import Quaternions
 from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
 from scipy.optimize import minimize
 from scipy.optimize import Bounds
+from scipy import optimize
 
 
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
@@ -128,14 +129,20 @@ class MPC(object):
         self.mpc_start_jd = current_jd
         self.mpc_main_count_time = 0
 
-        x0 = np.zeros(self.N_pred_horiz)+1
+        """
+        x0 = np.zeros(self.N_pred_horiz)
         xl = np.zeros(self.N_pred_horiz)
-        xu = 1e-3*np.ones(self.N_pred_horiz)
+        xu = 0.001*np.ones(self.N_pred_horiz)
         bounds = Bounds(xl, xu)
-        res = minimize(self.objetive_function, x0, method='trust-constr',
-                       options={'verbose': 1}, bounds=bounds)
+        res = minimize(self.objetive_function, x0, method='trust-constr', options={'verbose': 1}, bounds=bounds)
+        #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
+        """
+
+        bounds1 = [(-0.001, 0.001), ]*self.N_pred_horiz
+        res = optimize.differential_evolution(self.objetive_function1, bounds1, maxiter=50, popsize=15, tol=0.01)
 
         return res.x[0]
+
 
     def objetive_function(self, u):
         J = 0
@@ -156,10 +163,10 @@ class MPC(object):
         vec_u_e /= np.linalg.norm(vec_u_e)
 
         for i in range(self.N_pred_horiz):
-            print('Paso: ', i, 'Calculado')
+            # print('Paso: ', i, 'Calculado')
             # current_torque_b * np.identity(3) * np.transpose(current_torque_b)
             # J += 0.1 * self.euclidea_dist(u[i*3:(i+1)*3], current_torque_b)**2
-            J += 0.1 * theta_e**2 + 0.1 * u[i]**2 + 0.1 * (u[i] - last_mag_torque_b)**2
+            J += 0.1*theta_e**2 + 0.1 * u[i]**2 + 0.1 * (u[i] - last_mag_torque_b)**2
             current_torque_b = u[i] * vec_u_e
 
             self.mpc_main_count_time += self.mpc_sim_step_prop
@@ -180,7 +187,7 @@ class MPC(object):
             alt, long, lat = eci_to_geodetic(current_position_i, current_sideral)
 
             # Get Earth magnetic field
-            mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
+            # mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
             #print(mag_b, ', Paso:', i + 1)
 
             # Error determination
@@ -195,6 +202,72 @@ class MPC(object):
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
+        return J
+
+    def objetive_function1(self, u):
+        J = 0
+
+        last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
+        last_omega_b = self.mpc_current_omega_b
+        # last_mag_torque_b = np.linalg.norm(self.mpc_current_torque_b)
+
+        last_pos_i, last_vel_i = self.mpc_dynamics_orb.update_state_orbit(self.mpc_start_jd)
+        last_sideral = gstime(self.mpc_start_jd)
+        last_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, last_sideral)
+
+        current_tar_s2tar_i = last_tar_pos_eci_earth - last_pos_i
+        current_tar_pos_b = last_quaternion_q_i2b.frame_conv(current_tar_s2tar_i)
+        b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
+        # theta_e = np.arccos(np.dot(self.b_dir, b_tar_b))
+        #theta_e = np.arcsin(np.dot(self.b_dir, b_tar_b))
+        # theta_e = np.arccos(np.dot(self.b_dir, b_tar_b) / (np.linalg.norm(self.b_dir) * np.linalg.norm(b_tar_b)))
+        vec_u_e = np.cross(self.b_dir, b_tar_b)
+        vec_u_e /= np.linalg.norm(vec_u_e)
+
+        for i in range(self.N_pred_horiz):
+            # print('Paso: ', i, 'Calculado')
+            # current_torque_b * np.identity(3) * np.transpose(current_torque_b)
+            # J += 0.1 * self.euclidea_dist(u[i*3:(i+1)*3], current_torque_b)**2
+            # J += theta_e**2 + 0.1 * u[i]**2 + 0.1 * (u[i] - last_mag_torque_b)**2
+
+            current_torque_b = u[i] * vec_u_e
+
+            self.mpc_main_count_time += self.mpc_sim_step_prop
+            self.mpc_future_jd = self.mpc_start_jd + self.mpc_main_count_time * inv_sec_day
+
+            # mpc_decyear = JdToDecyear(self.mpc_future_jd)
+
+            # Dynamics update
+            current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
+                                                                      last_quaternion_q_i2b,
+                                                                      current_torque_b)
+
+            current_position_i, current_velocity_i = self.mpc_dynamics_orb.update_state_orbit(self.mpc_future_jd)
+            current_sideral = gstime(self.mpc_future_jd)
+            current_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, current_sideral)
+
+            # ECI to Geodetic state
+            # alt, long, lat = eci_to_geodetic(current_position_i, current_sideral)
+
+            # Get Earth magnetic field
+            # mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
+            #print(mag_b, ', Paso:', i + 1)
+
+            # Error determination
+            current_tar_s2tar_i = current_tar_pos_eci_earth - current_position_i
+            current_tar_pos_b = current_q_i2b.frame_conv(current_tar_s2tar_i)
+            b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
+            #theta_e = np.arccos(np.dot(self.b_dir, b_tar_b))
+            theta_e = np.arccos(np.dot(self.b_dir, b_tar_b) / (np.linalg.norm(self.b_dir) * np.linalg.norm(b_tar_b)))
+            vec_u_e = np.cross(self.b_dir, b_tar_b)
+            vec_u_e /= np.linalg.norm(vec_u_e)
+
+            # Save last data
+            last_omega_b = current_omega_b
+            last_quaternion_q_i2b = current_q_i2b
+            last_mag_torque_b = u[i]
+
+            J += theta_e ** 2 + 0.1 * u[i] ** 2 + 0.1 * (u[i] - last_mag_torque_b) ** 2
         return J
 
     def mag_ned_to_eci(self, mag_0, theta, lonrad, gmst):

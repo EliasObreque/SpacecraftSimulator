@@ -92,7 +92,7 @@ class ADCS(ComponentBase):
             rw.set_step_width(self.ctrl_cycle / 1000)
 
         # self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
-        control_parameters = {'N_pred_horiz': 3}
+        control_parameters = {'N_pred_horiz': 10}
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
         self.controller = Controller().mpc(self.dynamics, control_parameters, self.ctrl_cycle)
@@ -104,7 +104,7 @@ class ADCS(ComponentBase):
 
         self.determine_attitude()
 
-        # self.calculate_control_torque()
+        self.calculate_control_torque()
 
         # self.calc_rw_torque()
 
@@ -179,7 +179,8 @@ class ADCS(ComponentBase):
             current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
             current_tar_pos_b = self.dynamics.attitude.current_quaternion_i2b.frame_conv(current_tar_s2tar_i)
             self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
-            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
+            # self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
+            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b) / (np.linalg.norm(self.b_dir) * np.linalg.norm(self.b_tar_b)))
             self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
             self.vec_u_e /= np.linalg.norm(self.vec_u_e)
         else:
