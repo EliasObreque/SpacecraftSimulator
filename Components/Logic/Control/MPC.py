@@ -16,7 +16,10 @@ from scipy.optimize import minimize
 from scipy.optimize import Bounds
 from scipy import optimize
 
-
+REF_POINT = 2
+NAD_POINT = 1
+DETUMBLING = 0
+GSPOINT = 3
 inv_sec_day = 1 / (60.0 * 60.0 * 24.0)
 twopi = np.pi * 2
 deg2rad = np.pi / 180.0
@@ -31,7 +34,8 @@ b2 = 40408296.0     # Polar radius
 
 
 class MPC(object):
-    def __init__(self, dynamics, controller_parameters, ctrl_cycle):
+    def __init__(self, control_mode, dynamics, controller_parameters, ctrl_cycle):
+        self.mpc_control_mode = control_mode
         self.mpc_inertia = dynamics.attitude.Inertia
         self.mpc_inv_inertia = dynamics.attitude.inv_Inertia
         self.mpc_current_omega_b = np.zeros(3)
@@ -137,12 +141,16 @@ class MPC(object):
         res = minimize(self.objetive_function, x0, method='trust-constr', options={'verbose': 1}, bounds=bounds)
         #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
         """
-
         bounds1 = [(0.0, 1e-4)]*(self.N_pred_horiz - 1)
-        res = optimize.differential_evolution(self.objetive_function1, bounds1, maxiter=30, popsize=10, tol=0.001)
+        if self.mpc_control_mode == REF_POINT:
+            res = optimize.differential_evolution(self.objective_func_for_constant_ref_point,
+                                                  bounds1, maxiter=30, popsize=10, tol=0.001)
+        else:
+            res = optimize.differential_evolution(self.objective_func_for_variable_ref_point,
+                                                  bounds1, maxiter=30, popsize=10, tol=0.001)
         return res.x[0]
 
-    def objetive_function(self, u):
+    def objective_func_for_variable_ref_point(self, u):
         J = 0
 
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
@@ -160,12 +168,10 @@ class MPC(object):
         vec_u_e = np.cross(self.b_dir, b_tar_b)
         vec_u_e /= np.linalg.norm(vec_u_e)
 
-        for i in range(self.N_pred_horiz):
-            # print('Paso: ', i, 'Calculado')
-            # current_torque_b * np.identity(3) * np.transpose(current_torque_b)
-            # J += 0.1 * self.euclidea_dist(u[i*3:(i+1)*3], current_torque_b)**2
-            # J += 10.0 * theta_e ** 2 + 0.1 * u[i] ** 2 + 0.1 * (u[i] - last_mag_torque_b)**2
-            J += 10.0 * theta_e ** 2
+        for i in range(self.N_pred_horiz - 1):
+            J += theta_e ** 2 + np.linalg.norm(last_omega_b) ** 2
+            # J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
+            # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i] * vec_u_e
 
@@ -202,9 +208,12 @@ class MPC(object):
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
+
+        J += theta_e**2 + np.linalg.norm(last_omega_b) ** 2
+        # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
-    def objetive_function1(self, u):
+    def objective_func_for_constant_ref_point(self, u):
         J = 0
 
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
@@ -220,7 +229,8 @@ class MPC(object):
         vec_u_e /= np.linalg.norm(vec_u_e)
 
         for i in range(self.N_pred_horiz - 1):
-            J += theta_e**2 + 0.1 * u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
+            J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
+            # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i] * vec_u_e
             # Dynamics update
@@ -240,7 +250,8 @@ class MPC(object):
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
 
-        J += theta_e**2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
+        J += theta_e**2 + np.linalg.norm(last_omega_b) ** 2
+        # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
     def mag_ned_to_eci(self, mag_0, theta, lonrad, gmst):

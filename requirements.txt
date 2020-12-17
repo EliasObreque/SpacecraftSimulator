@@ -1,4 +1,11 @@
 jplephem~=2.14
-requests~=2.21.0
-numpy~=1.17.4
-tqdm~=4.46.0
+requests~=2.24.0
+numpy~=1.18.5
+tqdm~=4.47.0
+setuptools~=49.2.0
+dask~=2.20.0
+scipy~=1.5.0
+matplotlib~=3.2.2
+mpc~=1.1.0
+pandas~=1.0.5
+future~=0.18.2

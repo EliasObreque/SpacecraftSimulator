@@ -88,7 +88,7 @@ class ADCS(ComponentBase):
         self.qdrsfss_b = np.zeros((self.number_fss, 2))
         self.tick_temp = 1
 
-        self.adcs_mode = REF_POINT
+        self.adcs_mode = GSPOINT
         self.components.mtt.set_step_width(self.ctrl_cycle / 1000)
         for rw in self.components.rwmodel:
             rw.set_step_width(self.ctrl_cycle / 1000)
@@ -97,7 +97,7 @@ class ADCS(ComponentBase):
         control_parameters = {'N_pred_horiz': 10}
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
-        self.controller = Controller().mpc(self.dynamics, control_parameters, self.ctrl_cycle)
+        self.controller = Controller().mpc(self.adcs_mode, self.dynamics, control_parameters, self.ctrl_cycle)
 
     def main_routine(self, count, sc_isDark):
         # self.read_sensors(sc_isDark)
@@ -180,7 +180,6 @@ class ADCS(ComponentBase):
             current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
             current_tar_pos_b = self.q_i2b_est.frame_conv(current_tar_s2tar_i)
             self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
-            # self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
             self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
             self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
             self.vec_u_e /= np.linalg.norm(self.vec_u_e)
