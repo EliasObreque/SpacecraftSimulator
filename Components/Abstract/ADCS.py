@@ -64,6 +64,8 @@ class ADCS(ComponentBase):
         self.historical_b_tar_b = []
         self.historical_b_dir_b = []
         self.historical_vec_dir_tar_b = []
+        self.historical_calc_time = []
+        self.current_calc_time = 0
         self.current_theta_e = 0
         self.vec_u_e = np.zeros(3)
         self.P_omega = subsystem_setting['P_omega']
@@ -86,7 +88,7 @@ class ADCS(ComponentBase):
         self.qdrsfss_b = np.zeros((self.number_fss, 2))
         self.tick_temp = 1
 
-        self.adcs_mode = GSPOINT
+        self.adcs_mode = REF_POINT
         self.components.mtt.set_step_width(self.ctrl_cycle / 1000)
         for rw in self.components.rwmodel:
             rw.set_step_width(self.ctrl_cycle / 1000)
@@ -98,11 +100,11 @@ class ADCS(ComponentBase):
         self.controller = Controller().mpc(self.dynamics, control_parameters, self.ctrl_cycle)
 
     def main_routine(self, count, sc_isDark):
-        self.read_sensors(sc_isDark)
-
-        self.check_mode()
+        # self.read_sensors(sc_isDark)
 
         self.determine_attitude()
+
+        self.check_mode()
 
         self.calculate_control_torque()
 
@@ -124,21 +126,21 @@ class ADCS(ComponentBase):
 
     def determine_attitude(self):
         # To do: Omega Estimate
-        self.omega_b_est = self.current_omega_c_gyro
+        self.omega_b_est = self.dynamics.attitude.current_omega_b
         # True/Simulated quaternion
         att = self.dynamics.attitude.get_current_q_i2b()
         self.q_i2b_est.setquaternion(att)
-        # Simulated Sun Vector preprocessing
-        self.sunPos_i = self.dynamics.ephemeris.selected_body['SUN'].get_pos_from_center_i()
-        self.sunDir_b = unitVector(self.dynamics.ephemeris.selected_body['SUN'].get_pos_from_sc_b())
-        # Coarse Sun Sensor preprocessing (vector extraction from currents)
-        self.sunPos_est_b = self.eskf.get_ss_vect(self.current_I_sunsensors, self.components.sunsensors[0].I_max)
-        # Fine Sun Sensor preprocessing (vector extraction from quadrature voltage)
-        for i in range(self.number_fss):
-            self.rsfss_b[i] = self.eskf.get_fss_vect(self.V_ratios_fss[i], self.params_fss[i])
-            self.qdrsfss_b[i] = self.eskf.get_fss_qdvect(self.V_ratios_fss[i], self.params_fss[i])
-        # Fine Sun Sensor average preprocessing (vector extraction from quadrature voltage)
-        self.rsfss_mean_b = self.eskf.get_fss_mean_vect(self.rsfss_b)
+        # # Simulated Sun Vector preprocessing
+        # self.sunPos_i = self.dynamics.ephemeris.selected_body['SUN'].get_pos_from_center_i()
+        # self.sunDir_b = unitVector(self.dynamics.ephemeris.selected_body['SUN'].get_pos_from_sc_b())
+        # # Coarse Sun Sensor preprocessing (vector extraction from currents)
+        # self.sunPos_est_b = self.eskf.get_ss_vect(self.current_I_sunsensors, self.components.sunsensors[0].I_max)
+        # # Fine Sun Sensor preprocessing (vector extraction from quadrature voltage)
+        # for i in range(self.number_fss):
+        #     self.rsfss_b[i] = self.eskf.get_fss_vect(self.V_ratios_fss[i], self.params_fss[i])
+        #     self.qdrsfss_b[i] = self.eskf.get_fss_qdvect(self.V_ratios_fss[i], self.params_fss[i])
+        # # Fine Sun Sensor average preprocessing (vector extraction from quadrature voltage)
+        # self.rsfss_mean_b = self.eskf.get_fss_mean_vect(self.rsfss_b)
 
         # Estimate Spacecraft Attitude quaternion
         # self.eskf_process(self.ctrl_cycle/1000)
@@ -152,22 +154,21 @@ class ADCS(ComponentBase):
             print('Nadir pointing mode...')
         elif self.adcs_mode == REF_POINT:
             # Vector direction of the Body frame to point to another vector
-            b_dir = np.array([0, 0, 1])
+            self.b_dir = np.array([0, 0, 1])
 
             # Vector target from Inertial frame
             i_tar = np.array([1, 1, 1])
             i_tar = i_tar / np.linalg.norm(i_tar)
 
             # Vector target from body frame
-            b_tar = self.q_i2b_est.frame_conv(i_tar)
-            b_tar /= np.linalg.norm(b_tar)
+            self.b_tar_b = self.q_i2b_est.frame_conv(i_tar)
+            self.b_tar_b /= np.linalg.norm(self.b_tar_b)
 
-            b_lambda = np.cross(b_dir, b_tar)
-            b_lambda /= np.linalg.norm(b_lambda)
+            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
+            self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
+            self.vec_u_e /= np.linalg.norm(self.vec_u_e)
 
-            rot = np.arccos(np.dot(b_dir, b_tar))
-
-            self.q_b2b_now2tar.setquaternion([b_lambda, rot])
+            self.q_b2b_now2tar.setquaternion([self.vec_u_e, self.current_theta_e])
             self.q_b2b_now2tar.normalize()
             self.q_i2b_tar = self.q_i2b_est * self.q_b2b_now2tar
         elif self.adcs_mode == GSPOINT:
@@ -177,12 +178,16 @@ class ADCS(ComponentBase):
             current_sideral = gstime(self.dynamics.simtime.current_jd)
             current_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, current_sideral)
             current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
-            current_tar_pos_b = self.dynamics.attitude.current_quaternion_i2b.frame_conv(current_tar_s2tar_i)
+            current_tar_pos_b = self.q_i2b_est.frame_conv(current_tar_s2tar_i)
             self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
             # self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
-            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b) / (np.linalg.norm(self.b_dir) * np.linalg.norm(self.b_tar_b)))
+            self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
             self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
             self.vec_u_e /= np.linalg.norm(self.vec_u_e)
+
+            self.q_b2b_now2tar.setquaternion([self.vec_u_e, self.current_theta_e])
+            self.q_b2b_now2tar.normalize()
+            self.q_i2b_tar = self.q_i2b_est * self.q_b2b_now2tar
         else:
             print('No mode selected')
 
@@ -208,7 +213,7 @@ class ADCS(ComponentBase):
                                                         self.dynamics.attitude.current_omega_b,
                                                         self.control_torque], self.dynamics.simtime.current_jd)
 
-        print('Tiempo de calculo: ', time.time() - start_time)
+        self.current_calc_time = time.time() - start_time
         self.control_torque = control_mag_torque * self.vec_u_e
 
     def calc_mtt_torque(self):
@@ -238,6 +243,7 @@ class ADCS(ComponentBase):
         self.historical_b_tar_b.append(self.b_tar_b)
         self.historical_b_dir_b.append(self.b_dir)
         self.historical_vec_dir_tar_b.append(self.vec_u_e)
+        self.historical_calc_time.append(self.current_calc_time)
 
     def get_log_values(self, subsys):
         report = {'MTT_' + subsys + '_b(X)[Am]': 0,
@@ -256,6 +262,7 @@ class ADCS(ComponentBase):
                                'Vector_tar_b(Z) [-]': np.array(self.historical_b_tar_b)[:, 2],
                                'Vector_dir_tar_b(X) [-]': np.array(self.historical_vec_dir_tar_b)[:, 0],
                                'Vector_dir_tar_b(Y) [-]': np.array(self.historical_vec_dir_tar_b)[:, 1],
-                               'Vector_dir_tar_b(Z) [-]': np.array(self.historical_vec_dir_tar_b)[:, 2]}
+                               'Vector_dir_tar_b(Z) [-]': np.array(self.historical_vec_dir_tar_b)[:, 2],
+                               'Calculation_time [sec]': np.array(self.historical_calc_time)}
         report = {**report, **report_control, **report_target_state}
         return report
