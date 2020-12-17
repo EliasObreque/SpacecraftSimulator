@@ -13,13 +13,18 @@ REF_POINT = 2
 NAD_POINT = 1
 DETUMBLING = 0
 GSPOINT = 3
+
+twopi = np.pi * 2
+deg2rad = np.pi / 180.0
+rad2deg = 1 / deg2rad
+earth_rot_i = np.array([0, 0, 7.2921150e-5])    # [rad/s]
+
 # Target: Antenna Santiago
 tar_alt = 572  # m
 tar_long = -70.6506  # degree
 tar_lat = -33.4372  # degree
-twopi = np.pi * 2
-deg2rad = np.pi / 180.0
-rad2deg = 1 / deg2rad
+# Geodetic to ECEF
+tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
 
 
 class ADCS(ComponentBase):
@@ -43,8 +48,10 @@ class ADCS(ComponentBase):
         self.sunPos_est_b = np.zeros(3)
         self.torque_rw_b = np.zeros(3)
         self.omega_b_est = np.zeros(3)
+        self.omega_b_tar = np.zeros(3)
         self.b_dir = np.zeros(3)
         self.b_tar_b = np.zeros(3)
+        self.b_tar_i = np.zeros(3)
         self.control_torque = np.zeros(3)
         self.historical_control = []
         self.historical_estimation = []
@@ -62,7 +69,9 @@ class ADCS(ComponentBase):
         self.historical_eskf_bias = []
         self.historical_theta_e = []
         self.historical_b_tar_b = []
+        self.historical_b_tar_i = []
         self.historical_b_dir_b = []
+        self.historical_omega_b_tar = []
         self.historical_vec_dir_tar_b = []
         self.historical_calc_time = []
         self.current_calc_time = 0
@@ -172,12 +181,29 @@ class ADCS(ComponentBase):
             self.q_b2b_now2tar.normalize()
             self.q_i2b_tar = self.q_i2b_est * self.q_b2b_now2tar
         elif self.adcs_mode == GSPOINT:
+            # omega_target_b error
+            sideral = gstime(self.dynamics.simtime.current_jd)
+            tar_pos_i = rotationZ(self.tar_pos_ecef, sideral)
+            vel_gs_i = np.cross(earth_rot_i, tar_pos_i)
+            vel_gs_sc = vel_gs_i - self.dynamics.orbit.current_velocity_i
+            pos_gs_sc = tar_pos_i - self.dynamics.orbit.current_position_i
+            mag_omega_gs_sc = np.linalg.norm(vel_gs_sc) / np.linalg.norm(pos_gs_sc)
+
+            unit_vec_pos = pos_gs_sc /np.linalg.norm(pos_gs_sc)
+            unit_vec_vel = vel_gs_sc /np.linalg.norm(vel_gs_sc)
+
+            unit_vec_omega_gs_sc = np.cross(unit_vec_pos, unit_vec_vel)
+            omega_gs_from_sc_i = mag_omega_gs_sc * unit_vec_omega_gs_sc
+
+            self.omega_b_tar = self.q_i2b_est.frame_conv(omega_gs_from_sc_i)
+
             # Vector direction of the Body frame to point to another vector
             self.b_dir = np.array([0, 0, 1])
             # Error
             current_sideral = gstime(self.dynamics.simtime.current_jd)
             current_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, current_sideral)
             current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
+            self.b_tar_i = current_tar_s2tar_i / np.linalg.norm(current_tar_s2tar_i)
             current_tar_pos_b = self.q_i2b_est.frame_conv(current_tar_s2tar_i)
             self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
             self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
@@ -208,12 +234,13 @@ class ADCS(ComponentBase):
         # error_ = angle_rotation * torque_direction
 
         start_time = time.time()
-        control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                                        self.dynamics.attitude.current_omega_b,
-                                                        self.control_torque], self.dynamics.simtime.current_jd)
+        # control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+        #                                                 self.dynamics.attitude.current_omega_b,
+        #                                                 self.control_torque], self.dynamics.simtime.current_jd)
         self.current_calc_time = time.time() - start_time
-        self.control_torque = control_mag_torque * self.vec_u_e
+        # self.control_torque = control_mag_torque * self.vec_u_e
         # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e - self.omega_b_est * 5e-4
+        self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
@@ -239,7 +266,9 @@ class ADCS(ComponentBase):
         self.historical_control.append(self.control_torque)
         self.historical_magVect_i.append(self.magVect_i)
         self.historical_theta_e.append(self.current_theta_e)
+        self.historical_omega_b_tar.append(self.omega_b_tar)
         self.historical_b_tar_b.append(self.b_tar_b)
+        self.historical_b_tar_i.append(self.b_tar_i)
         self.historical_b_dir_b.append(self.b_dir)
         self.historical_vec_dir_tar_b.append(self.vec_u_e)
         self.historical_calc_time.append(self.current_calc_time)
@@ -259,9 +288,15 @@ class ADCS(ComponentBase):
                                'Vector_tar_b(X) [-]': np.array(self.historical_b_tar_b)[:, 0],
                                'Vector_tar_b(Y) [-]': np.array(self.historical_b_tar_b)[:, 1],
                                'Vector_tar_b(Z) [-]': np.array(self.historical_b_tar_b)[:, 2],
+                               'Vector_tar_i(X) [-]': np.array(self.historical_b_tar_i)[:, 0],
+                               'Vector_tar_i(Y) [-]': np.array(self.historical_b_tar_i)[:, 1],
+                               'Vector_tar_i(Z) [-]': np.array(self.historical_b_tar_i)[:, 2],
                                'Vector_dir_tar_b(X) [-]': np.array(self.historical_vec_dir_tar_b)[:, 0],
                                'Vector_dir_tar_b(Y) [-]': np.array(self.historical_vec_dir_tar_b)[:, 1],
                                'Vector_dir_tar_b(Z) [-]': np.array(self.historical_vec_dir_tar_b)[:, 2],
+                               'Omega_b_tar(X) [rad/s]': np.array(self.historical_omega_b_tar)[:, 0],
+                               'Omega_b_tar(Y) [rad/s]': np.array(self.historical_omega_b_tar)[:, 1],
+                               'Omega_b_tar(Z) [rad/s]': np.array(self.historical_omega_b_tar)[:, 2],
                                'Calculation_time [sec]': np.array(self.historical_calc_time)}
         report = {**report, **report_control, **report_target_state}
         return report
