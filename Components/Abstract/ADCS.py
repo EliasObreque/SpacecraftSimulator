@@ -157,7 +157,7 @@ class ADCS(ComponentBase):
             self.b_dir = np.array([0, 0, 1])
 
             # Vector target from Inertial frame
-            i_tar = np.array([1, 1, 1])
+            i_tar = np.array([-1, 0, 0])
             i_tar = i_tar / np.linalg.norm(i_tar)
 
             # Vector target from body frame
@@ -212,9 +212,9 @@ class ADCS(ComponentBase):
         control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
                                                         self.dynamics.attitude.current_omega_b,
                                                         self.control_torque], self.dynamics.simtime.current_jd)
-
         self.current_calc_time = time.time() - start_time
         self.control_torque = control_mag_torque * self.vec_u_e
+        # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e - self.omega_b_est * 5e-4
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)

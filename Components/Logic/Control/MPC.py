@@ -138,8 +138,8 @@ class MPC(object):
         #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
         """
 
-        bounds1 = [(-0.001, 0.001), ]*self.N_pred_horiz
-        res = optimize.differential_evolution(self.objetive_function1, bounds1, maxiter=20, popsize=10, tol=0.001)
+        bounds1 = [(0.0, 1e-4)]*(self.N_pred_horiz - 1)
+        res = optimize.differential_evolution(self.objetive_function1, bounds1, maxiter=30, popsize=10, tol=0.001)
         return res.x[0]
 
     def objetive_function(self, u):
@@ -211,7 +211,7 @@ class MPC(object):
         last_omega_b = self.mpc_current_omega_b
         last_mag_torque_b = np.linalg.norm(self.mpc_current_torque_b)
 
-        current_tar_s2tar_i = np.array([1, 1, 1])
+        current_tar_s2tar_i = np.array([1, 0, 0])
         current_tar_pos_b = last_quaternion_q_i2b.frame_conv(current_tar_s2tar_i)
         b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
         theta_e = np.arccos(np.dot(self.b_dir, b_tar_b))
@@ -219,8 +219,8 @@ class MPC(object):
         vec_u_e = np.cross(self.b_dir, b_tar_b)
         vec_u_e /= np.linalg.norm(vec_u_e)
 
-        for i in range(self.N_pred_horiz):
-            J += theta_e**2 + 0.1 * u[i] ** 2 + 0.1 * (u[i] - last_mag_torque_b)**2
+        for i in range(self.N_pred_horiz - 1):
+            J += theta_e**2 + 0.1 * u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i] * vec_u_e
             # Dynamics update
@@ -239,6 +239,8 @@ class MPC(object):
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
+
+        J += theta_e**2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
     def mag_ned_to_eci(self, mag_0, theta, lonrad, gmst):
