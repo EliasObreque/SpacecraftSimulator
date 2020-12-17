@@ -146,7 +146,7 @@ class MPC(object):
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
 
-        J += theta_e**2 + np.linalg.norm(last_omega_b) ** 2
+        J += theta_e**2 + np.linalg.norm(omega_tar_b - last_omega_b) ** 2
         # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
