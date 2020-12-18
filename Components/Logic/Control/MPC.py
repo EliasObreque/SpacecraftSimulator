@@ -68,6 +68,7 @@ class MPC(object):
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
         # Vector direction of the Body frame to point to another vector
         self.b_dir = np.array([0, 0, 1])
+        self.current_tar_sc_i = np.array([1, 1, 1])
         self.q_b2b_now2tar = Quaternions([0, 0, 0, 1])
 
     def open_loop(self, current_att_state, current_jd):
@@ -97,14 +98,14 @@ class MPC(object):
         res = minimize(self.objetive_function, x0, method='trust-constr', options={'verbose': 1}, bounds=bounds)
         #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
         """
-        bounds1 = [(0.0, 1e-4)]*(self.N_pred_horiz - 1)
+        bounds1 = [(-1e-5, 1e-5)]*(self.N_pred_horiz - 1) * 3
         if self.mpc_control_mode == REF_POINT:
             res = optimize.differential_evolution(self.objective_func_for_constant_ref_point,
-                                                  bounds1, maxiter=30, popsize=10, tol=0.001)
+                                                  bounds1, maxiter=10, popsize=10, tol=0.001, mutation=0.1)
         else:
             res = optimize.differential_evolution(self.objective_func_for_variable_ref_point,
-                                                  bounds1, maxiter=20, popsize=10, tol=0.001)
-        return res.x[0]
+                                                  bounds1, maxiter=10, popsize=10, tol=0.001, mutation=0.1)
+        return res.x[0], res.fun
 
     def objective_func_for_variable_ref_point(self, u):
         J = 0
@@ -114,15 +115,16 @@ class MPC(object):
 
         current_tar_pos_b = last_quaternion_q_i2b.frame_conv(self.mpc_array_tar_pos_sc_i[0])
         theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
-        omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[0],
-                                         self.mpc_array_sc_vel_i[0], last_quaternion_q_i2b)
+        # omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[0],
+        #                                  self.mpc_array_sc_vel_i[0], last_quaternion_q_i2b)
 
         for i in range(self.N_pred_horiz - 1):
-            J += theta_e ** 2 + np.linalg.norm(omega_tar_b - last_omega_b) ** 2
+            J += theta_e ** 2
             # J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
             # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
-            current_torque_b = u[i] * vec_u_e
+            # current_torque_b = u[i] * vec_u_e
+            current_torque_b = u[(i*3):(i+1)*3]
 
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
@@ -139,30 +141,28 @@ class MPC(object):
             # Error determination
             current_tar_pos_b = current_q_i2b.frame_conv(self.mpc_array_tar_pos_sc_i[i + 1])
             theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
-            omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[i + 1],
-                                             self.mpc_array_sc_vel_i[i + 1], current_q_i2b)
+            # omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[i + 1],
+            #                                  self.mpc_array_sc_vel_i[i + 1], current_q_i2b)
 
             # Save last data
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
 
-        J += theta_e**2 + np.linalg.norm(omega_tar_b - last_omega_b) ** 2
+        J += theta_e**2
         # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
     def objective_func_for_constant_ref_point(self, u):
         J = 0
-
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
         last_omega_b = self.mpc_current_omega_b
         last_mag_torque_b = np.linalg.norm(self.mpc_current_torque_b)
 
-        current_tar_s2tar_i = np.array([1, 0, 0])
-        current_tar_pos_b = last_quaternion_q_i2b.frame_conv(current_tar_s2tar_i)
+        current_tar_pos_b = last_quaternion_q_i2b.frame_conv(self.current_tar_sc_i)
         theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
 
         for i in range(self.N_pred_horiz - 1):
-            J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
+            J += 10 * theta_e ** 2 + np.linalg.norm(last_omega_b) ** 2
             # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i] * vec_u_e
@@ -172,7 +172,7 @@ class MPC(object):
                                                                       current_torque_b)
 
             # Error determination
-            current_tar_pos_b = current_q_i2b.frame_conv(current_tar_s2tar_i)
+            current_tar_pos_b = current_q_i2b.frame_conv(current_tar_pos_b)
             theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
 
             # Save last data
@@ -180,7 +180,7 @@ class MPC(object):
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
 
-        J += theta_e**2 + np.linalg.norm(last_omega_b) ** 2
+        J += 10 * theta_e**2 + np.linalg.norm(last_omega_b) ** 2
         # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
@@ -190,6 +190,10 @@ class MPC(object):
         vec_u_e = np.cross(self.b_dir, b_tar_b)
         vec_u_e /= np.linalg.norm(vec_u_e)
         return theta_e, vec_u_e
+
+    def set_ref_vector_i(self, vector):
+        self.current_tar_sc_i = vector / np.linalg.norm(vector)
+        return
 
     def get_omega_tar(self, current_jd, current_position_i, current_velocity_i, current_q_i2b):
         # omega_target_b error
@@ -272,7 +276,8 @@ class MPC(object):
         q_i2b.normalize()
         return q_i2b, omega_b
 
-    def skewsymmetricmatrix(self, x_omega_b):
+    @staticmethod
+    def skewsymmetricmatrix(x_omega_b):
         s_omega = np.zeros((3, 3))
         s_omega[1, 0] = x_omega_b[2]
         s_omega[2, 0] = -x_omega_b[1]
@@ -282,7 +287,8 @@ class MPC(object):
         s_omega[1, 2] = -x_omega_b[0]
         return s_omega
 
-    def omega4kinematics(self, x_omega_b):
+    @staticmethod
+    def omega4kinematics(x_omega_b):
         Omega = np.zeros((4, 4))
         Omega[1, 0] = -x_omega_b[2]
         Omega[2, 0] = x_omega_b[1]
@@ -301,6 +307,6 @@ class MPC(object):
         Omega[3, 2] = -x_omega_b[2]
         return Omega
 
-    def euclidea_dist(self, x, y):
+    @staticmethod
+    def euclidea_dist(x, y):
         return np.sqrt((x[0]-y[0])**2+(x[1]-y[1])**2+(x[1]-y[1])**2)
-

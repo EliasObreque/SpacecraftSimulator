@@ -74,7 +74,9 @@ class ADCS(ComponentBase):
         self.historical_omega_b_tar = []
         self.historical_vec_dir_tar_b = []
         self.historical_calc_time = []
+        self.historical_cost = []
         self.current_calc_time = 0
+        self.jcost = 0
         self.current_theta_e = 0
         self.vec_u_e = np.zeros(3)
         self.P_omega = subsystem_setting['P_omega']
@@ -103,7 +105,7 @@ class ADCS(ComponentBase):
             rw.set_step_width(self.ctrl_cycle / 1000)
 
         # self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
-        control_parameters = {'N_pred_horiz': 10}
+        control_parameters = {'N_pred_horiz': 5}
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
         self.controller = Controller().mpc(self.adcs_mode, self.dynamics, control_parameters, self.ctrl_cycle)
@@ -166,9 +168,10 @@ class ADCS(ComponentBase):
             self.b_dir = np.array([0, 0, 1])
 
             # Vector target from Inertial frame
-            i_tar = np.array([-1, 0, 0])
+            i_tar = np.array([-1, 0.5, 1])
             i_tar = i_tar / np.linalg.norm(i_tar)
-
+            self.controller.set_ref_vector_i(i_tar)
+            self.b_tar_i = i_tar
             # Vector target from body frame
             self.b_tar_b = self.q_i2b_est.frame_conv(i_tar)
             self.b_tar_b /= np.linalg.norm(self.b_tar_b)
@@ -234,9 +237,9 @@ class ADCS(ComponentBase):
         # error_ = angle_rotation * torque_direction
 
         start_time = time.time()
-        control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                                        self.dynamics.attitude.current_omega_b,
-                                                        self.control_torque], self.dynamics.simtime.current_jd)
+        control_mag_torque, self.jcost = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+                                                                    self.dynamics.attitude.current_omega_b,
+                                                                    self.control_torque], self.dynamics.simtime.current_jd)
         self.current_calc_time = time.time() - start_time
         self.control_torque = control_mag_torque * self.vec_u_e
 
@@ -274,6 +277,7 @@ class ADCS(ComponentBase):
         self.historical_b_dir_b.append(self.b_dir)
         self.historical_vec_dir_tar_b.append(self.vec_u_e)
         self.historical_calc_time.append(self.current_calc_time)
+        self.historical_cost.append(self.jcost)
 
     def get_log_values(self, subsys):
         report = {'MTT_' + subsys + '_b(X)[Am]': 0,
@@ -299,6 +303,7 @@ class ADCS(ComponentBase):
                                'Omega_b_tar(X) [rad/s]': np.array(self.historical_omega_b_tar)[:, 0],
                                'Omega_b_tar(Y) [rad/s]': np.array(self.historical_omega_b_tar)[:, 1],
                                'Omega_b_tar(Z) [rad/s]': np.array(self.historical_omega_b_tar)[:, 2],
-                               'Calculation_time [sec]': np.array(self.historical_calc_time)}
+                               'Calculation_time [sec]': np.array(self.historical_calc_time),
+                               'Cost_function [-]': np.array(self.historical_cost)}
         report = {**report, **report_control, **report_target_state}
         return report
