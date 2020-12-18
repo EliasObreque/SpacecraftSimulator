@@ -74,8 +74,10 @@ class ADCS(ComponentBase):
         self.historical_omega_b_tar = []
         self.historical_vec_dir_tar_b = []
         self.historical_calc_time = []
+        self.historical_fo = []
         self.current_calc_time = 0
         self.current_theta_e = 0
+        self.current_fo = 0
         self.vec_u_e = np.zeros(3)
         self.P_omega = subsystem_setting['P_omega']
         self.I_quat = subsystem_setting['I_quat']
@@ -103,7 +105,7 @@ class ADCS(ComponentBase):
             rw.set_step_width(self.ctrl_cycle / 1000)
 
         # self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
-        control_parameters = {'N_pred_horiz': 10}
+        control_parameters = {'N_pred_horiz': 5}
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
         self.controller = Controller().mpc(self.adcs_mode, self.dynamics, control_parameters, self.ctrl_cycle)
@@ -234,15 +236,18 @@ class ADCS(ComponentBase):
         # error_ = angle_rotation * torque_direction
 
         start_time = time.time()
-        control_mag_torque = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+        # Control MPC
+        control_mag_torque, self.current_fo = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
                                                         self.dynamics.attitude.current_omega_b,
                                                         self.control_torque], self.dynamics.simtime.current_jd)
-        self.current_calc_time = time.time() - start_time
-        self.control_torque = control_mag_torque * self.vec_u_e
+
+        self.control_torque = control_mag_torque        #* self.vec_u_e
 
         # Control PID
         # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e - self.omega_b_est * 5e-4
-        # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
+        #self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
+
+        self.current_calc_time = time.time() - start_time
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
@@ -274,6 +279,7 @@ class ADCS(ComponentBase):
         self.historical_b_dir_b.append(self.b_dir)
         self.historical_vec_dir_tar_b.append(self.vec_u_e)
         self.historical_calc_time.append(self.current_calc_time)
+        self.historical_fo.append(self.current_fo)
 
     def get_log_values(self, subsys):
         report = {'MTT_' + subsys + '_b(X)[Am]': 0,
@@ -299,6 +305,7 @@ class ADCS(ComponentBase):
                                'Omega_b_tar(X) [rad/s]': np.array(self.historical_omega_b_tar)[:, 0],
                                'Omega_b_tar(Y) [rad/s]': np.array(self.historical_omega_b_tar)[:, 1],
                                'Omega_b_tar(Z) [rad/s]': np.array(self.historical_omega_b_tar)[:, 2],
-                               'Calculation_time [sec]': np.array(self.historical_calc_time)}
+                               'Calculation_time [sec]': np.array(self.historical_calc_time),
+                               'FO_value [-]': np.array(self.historical_fo)}
         report = {**report, **report_control, **report_target_state}
         return report

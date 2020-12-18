@@ -90,21 +90,21 @@ class MPC(object):
         self.mpc_array_tar_pos_sc_i = [self.mpc_array_tar_pos_i[i] - self.mpc_array_sc_pos_i[i] for i in range(self.N_pred_horiz)]
 
         """
-        x0 = np.zeros(self.N_pred_horiz)
-        xl = np.zeros(self.N_pred_horiz)
-        xu = 0.001*np.ones(self.N_pred_horiz)
-        bounds = Bounds(xl, xu)
+        x0 = np.zeros(self.N_pred_horiz-1)
+        xl = np.zeros(3*(self.N_pred_horiz-1))
+        xu = 1e4*np.ones(3*(self.N_pred_horiz-1))
+        bounds = Bounds(xl, xu)      
         res = minimize(self.objetive_function, x0, method='trust-constr', options={'verbose': 1}, bounds=bounds)
         #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
         """
-        bounds1 = [(0.0, 1e-4)]*(self.N_pred_horiz - 1)
+        bounds1 = [(-1e-4, 1e-4)]*(3*(self.N_pred_horiz - 1))
         if self.mpc_control_mode == REF_POINT:
             res = optimize.differential_evolution(self.objective_func_for_constant_ref_point,
-                                                  bounds1, maxiter=30, popsize=10, tol=0.001)
+                                                  bounds1, maxiter=30, popsize=10, tol=1e-4)
         else:
             res = optimize.differential_evolution(self.objective_func_for_variable_ref_point,
-                                                  bounds1, maxiter=20, popsize=10, tol=0.001)
-        return res.x[0]
+                                                  bounds1, maxiter=20, popsize=10, tol=1e-4)
+        return res.x[0:3], res.fun
 
     def objective_func_for_variable_ref_point(self, u):
         J = 0
@@ -122,7 +122,8 @@ class MPC(object):
             # J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
             # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
-            current_torque_b = u[i] * vec_u_e
+            #current_torque_b = u[i] * vec_u_e
+            current_torque_b = u[i*3:(i+1)*3]
 
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
