@@ -91,21 +91,21 @@ class MPC(object):
         self.mpc_array_tar_pos_sc_i = [self.mpc_array_tar_pos_i[i] - self.mpc_array_sc_pos_i[i] for i in range(self.N_pred_horiz)]
 
         """
-        x0 = np.zeros(self.N_pred_horiz)
-        xl = np.zeros(self.N_pred_horiz)
-        xu = 0.001*np.ones(self.N_pred_horiz)
-        bounds = Bounds(xl, xu)
+        x0 = np.zeros(self.N_pred_horiz-1)
+        xl = np.zeros(3*(self.N_pred_horiz-1))
+        xu = 1e4*np.ones(3*(self.N_pred_horiz-1))
+        bounds = Bounds(xl, xu)      
         res = minimize(self.objetive_function, x0, method='trust-constr', options={'verbose': 1}, bounds=bounds)
         #res = minimize(self.objetive_function, x0, method='SLSQP', options={'ftol': 1e-9, 'disp': True}, bounds=bounds)
         """
-        bounds1 = [(-1e-5, 1e-5)]*(self.N_pred_horiz - 1) * 3
+        bounds1 = [(-1e-4, 1e-4)]*(3*(self.N_pred_horiz - 1))
         if self.mpc_control_mode == REF_POINT:
             res = optimize.differential_evolution(self.objective_func_for_constant_ref_point,
-                                                  bounds1, maxiter=10, popsize=10, tol=0.001, mutation=0.1)
+                                                  bounds1, maxiter=30, popsize=10, tol=1e-4)
         else:
             res = optimize.differential_evolution(self.objective_func_for_variable_ref_point,
-                                                  bounds1, maxiter=10, popsize=10, tol=0.001, mutation=0.1)
-        return res.x[0], res.fun
+                                                  bounds1, maxiter=20, popsize=10, tol=1e-4)
+        return res.x[0:3], res.fun
 
     def objective_func_for_variable_ref_point(self, u):
         J = 0
@@ -115,16 +115,16 @@ class MPC(object):
 
         current_tar_pos_b = last_quaternion_q_i2b.frame_conv(self.mpc_array_tar_pos_sc_i[0])
         theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
-        # omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[0],
-        #                                  self.mpc_array_sc_vel_i[0], last_quaternion_q_i2b)
+        omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[0],
+                                         self.mpc_array_sc_vel_i[0], last_quaternion_q_i2b)
 
         for i in range(self.N_pred_horiz - 1):
-            J += theta_e ** 2
+            J += theta_e ** 2 + np.linalg.norm(omega_tar_b - last_omega_b) ** 2
             # J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
             # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
-            # current_torque_b = u[i] * vec_u_e
-            current_torque_b = u[(i*3):(i+1)*3]
+            #current_torque_b = u[i] * vec_u_e
+            current_torque_b = u[i*3:(i+1)*3]
 
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
@@ -141,19 +141,20 @@ class MPC(object):
             # Error determination
             current_tar_pos_b = current_q_i2b.frame_conv(self.mpc_array_tar_pos_sc_i[i + 1])
             theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
-            # omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[i + 1],
-            #                                  self.mpc_array_sc_vel_i[i + 1], current_q_i2b)
+            omega_tar_b = self.get_omega_tar(self.mpc_start_jd, self.mpc_array_sc_pos_i[i + 1],
+                                             self.mpc_array_sc_vel_i[i + 1], current_q_i2b)
 
             # Save last data
             last_omega_b = current_omega_b
             last_quaternion_q_i2b = current_q_i2b
 
-        J += theta_e**2
+        J += theta_e**2 + np.linalg.norm(omega_tar_b - last_omega_b) ** 2
         # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
     def objective_func_for_constant_ref_point(self, u):
         J = 0
+
         last_quaternion_q_i2b = self.mpc_current_quaternion_i2b
         last_omega_b = self.mpc_current_omega_b
         last_mag_torque_b = np.linalg.norm(self.mpc_current_torque_b)
@@ -162,7 +163,7 @@ class MPC(object):
         theta_e, vec_u_e = self.get_theta_vector_error(current_tar_pos_b)
 
         for i in range(self.N_pred_horiz - 1):
-            J += 10 * theta_e ** 2 + np.linalg.norm(last_omega_b) ** 2
+            J += theta_e ** 2 + u[i] ** 2 + np.linalg.norm(last_omega_b) ** 2
             # J += 0.01 * theta_e**2 + u[i] ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i] * vec_u_e
@@ -180,7 +181,7 @@ class MPC(object):
             last_quaternion_q_i2b = current_q_i2b
             last_mag_torque_b = u[i]
 
-        J += 10 * theta_e**2 + np.linalg.norm(last_omega_b) ** 2
+        J += theta_e**2 + np.linalg.norm(last_omega_b) ** 2
         # J += 0.01 * theta_e ** 2 + 0.01 * np.linalg.norm(last_omega_b) ** 2
         return J
 
