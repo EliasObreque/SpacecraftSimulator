@@ -9,10 +9,10 @@ import numpy as np
 import time
 from Library.math_sup.tools_reference_frame import geodetic_to_ecef, gstime, rotationZ
 
-REF_POINT = 2
-NAD_POINT = 1
 DETUMBLING = 0
-GSPOINT = 3
+NAD_POINT = 1
+REF_POINT = 2
+GS_POINT = 3
 
 twopi = np.pi * 2
 deg2rad = np.pi / 180.0
@@ -24,7 +24,7 @@ tar_alt = 572  # m
 tar_long = -70.6506  # degree
 tar_lat = -33.4372  # degree
 # Geodetic to ECEF
-tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
+tar_pos_ecef = geodetic_to_ecef(tar_alt * 1e-3, tar_long * deg2rad, tar_lat * deg2rad)
 
 
 class ADCS(ComponentBase):
@@ -74,10 +74,10 @@ class ADCS(ComponentBase):
         self.historical_omega_b_tar = []
         self.historical_vec_dir_tar_b = []
         self.historical_calc_time = []
-        self.historical_fo = []
+        self.historical_cost_function = []
         self.current_calc_time = 0
         self.current_theta_e = 0
-        self.current_fo = 0
+        self.current_cost = 0
         self.vec_u_e = np.zeros(3)
         self.P_omega = subsystem_setting['P_omega']
         self.I_quat = subsystem_setting['I_quat']
@@ -99,7 +99,7 @@ class ADCS(ComponentBase):
         self.qdrsfss_b = np.zeros((self.number_fss, 2))
         self.tick_temp = 1
 
-        self.adcs_mode = GSPOINT
+        self.adcs_mode = GS_POINT
         self.components.mtt.set_step_width(self.ctrl_cycle / 1000)
         for rw in self.components.rwmodel:
             rw.set_step_width(self.ctrl_cycle / 1000)
@@ -170,6 +170,8 @@ class ADCS(ComponentBase):
             # Vector target from Inertial frame
             i_tar = np.array([-1, 0, 0])
             i_tar = i_tar / np.linalg.norm(i_tar)
+            self.b_tar_i = i_tar
+            self.controller.set_ref_vector_i(i_tar)
 
             # Vector target from body frame
             self.b_tar_b = self.q_i2b_est.frame_conv(i_tar)
@@ -182,7 +184,7 @@ class ADCS(ComponentBase):
             self.q_b2b_now2tar.setquaternion([self.vec_u_e, self.current_theta_e])
             self.q_b2b_now2tar.normalize()
             self.q_i2b_tar = self.q_i2b_est * self.q_b2b_now2tar
-        elif self.adcs_mode == GSPOINT:
+        elif self.adcs_mode == GS_POINT:
             # omega_target_b error
             sideral = gstime(self.dynamics.simtime.current_jd)
             tar_pos_i = rotationZ(self.tar_pos_ecef, sideral)
@@ -237,17 +239,16 @@ class ADCS(ComponentBase):
 
         start_time = time.time()
         # Control MPC
-        control_mag_torque, self.current_fo = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                                        self.dynamics.attitude.current_omega_b,
-                                                        self.control_torque], self.dynamics.simtime.current_jd)
+        control_mag_torque, self.current_cost = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+                                                                           self.dynamics.attitude.current_omega_b,
+                                                                           self.control_torque], self.dynamics.simtime.current_jd)
 
-        self.control_torque = control_mag_torque        #* self.vec_u_e
+        self.current_calc_time = time.time() - start_time
+        self.control_torque = control_mag_torque
 
         # Control PID
         # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e - self.omega_b_est * 5e-4
-        #self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
-
-        self.current_calc_time = time.time() - start_time
+        # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
@@ -279,7 +280,7 @@ class ADCS(ComponentBase):
         self.historical_b_dir_b.append(self.b_dir)
         self.historical_vec_dir_tar_b.append(self.vec_u_e)
         self.historical_calc_time.append(self.current_calc_time)
-        self.historical_fo.append(self.current_fo)
+        self.historical_cost_function.append(self.current_cost)
 
     def get_log_values(self, subsys):
         report = {'MTT_' + subsys + '_b(X)[Am]': 0,
@@ -306,6 +307,6 @@ class ADCS(ComponentBase):
                                'Omega_b_tar(Y) [rad/s]': np.array(self.historical_omega_b_tar)[:, 1],
                                'Omega_b_tar(Z) [rad/s]': np.array(self.historical_omega_b_tar)[:, 2],
                                'Calculation_time [sec]': np.array(self.historical_calc_time),
-                               'FO_value [-]': np.array(self.historical_fo)}
+                               'Cost_function [-]': np.array(self.historical_cost_function)}
         report = {**report, **report_control, **report_target_state}
         return report
