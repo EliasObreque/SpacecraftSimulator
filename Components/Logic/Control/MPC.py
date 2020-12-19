@@ -74,7 +74,7 @@ class MPC(object):
         self.mpc_array_tar_pos_sc_i = []
 
         # Geodetic to ECEF
-        self.tar_pos_ecef = geodetic_to_ecef(tar_alt * 1e-3, tar_long * deg2rad, tar_lat * deg2rad)
+        self.tar_pos_ecef = geodetic_to_ecef(tar_alt * 1e-3, tar_long * deg2rad, tar_lat * deg2rad) * 1e3
         # Vector direction of the Body frame to point to another vector
         self.b_dir = np.array([0, 0, 1])
         self.current_tar_sc_i = np.array([1, 1, 1])
@@ -95,7 +95,7 @@ class MPC(object):
         self.mpc_array_sc_pos_i = [temp[i][0] for i in range(self.N_pred_horiz)]
         self.mpc_array_sc_vel_i = [temp[i][1] for i in range(self.N_pred_horiz)]
         self.mpc_array_sideral = [gstime(elem) for elem in self.mpc_array_jd]
-        self.mpc_array_tar_pos_i = [rotationZ(self.tar_pos_ecef, k_sideral) for k_sideral in self.mpc_array_sideral]
+        self.mpc_array_tar_pos_i = [rotationZ(self.tar_pos_ecef, -k_sideral) for k_sideral in self.mpc_array_sideral]
 
         self.mpc_array_tar_pos_sc_i = [self.mpc_array_tar_pos_i[i] - self.mpc_array_sc_pos_i[i] for i in range(self.N_pred_horiz)]
 
@@ -213,7 +213,7 @@ class MPC(object):
     def get_omega_tar(self, current_jd, current_position_i, current_velocity_i, current_q_i2b):
         # omega_target_b error
         sideral = gstime(current_jd)
-        tar_pos_i = rotationZ(self.tar_pos_ecef, sideral)
+        tar_pos_i = rotationZ(self.tar_pos_ecef, -sideral)
         vel_gs_i = np.cross(earth_rot_i, tar_pos_i)
         vel_gs_sc = vel_gs_i - current_velocity_i
         pos_gs_sc = tar_pos_i - current_position_i

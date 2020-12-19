@@ -107,7 +107,7 @@ class ADCS(ComponentBase):
         # self.controller = Controller().pid(self.P_quat, self.I_quat, self.P_omega, self.ctrl_cycle/1000)
         control_parameters = {'N_pred_horiz': 5}
         # Geodetic to ECEF
-        self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad)
+        self.tar_pos_ecef = geodetic_to_ecef(tar_alt, tar_long * deg2rad, tar_lat * deg2rad) * 1e3
         self.controller = Controller().mpc(self.adcs_mode, self.dynamics, control_parameters, self.ctrl_cycle)
 
     def main_routine(self, count, sc_isDark):
@@ -187,14 +187,14 @@ class ADCS(ComponentBase):
         elif self.adcs_mode == GS_POINT:
             # omega_target_b error
             sideral = gstime(self.dynamics.simtime.current_jd)
-            tar_pos_i = rotationZ(self.tar_pos_ecef, sideral)
+            tar_pos_i = rotationZ(self.tar_pos_ecef, -sideral)
             vel_gs_i = np.cross(earth_rot_i, tar_pos_i)
             vel_gs_sc = vel_gs_i - self.dynamics.orbit.current_velocity_i
-            pos_gs_sc = tar_pos_i - self.dynamics.orbit.current_position_i
-            mag_omega_gs_sc = np.linalg.norm(vel_gs_sc) / np.linalg.norm(pos_gs_sc)
+            pos_sc2tar_i = tar_pos_i - self.dynamics.orbit.current_position_i
+            mag_omega_gs_sc = np.linalg.norm(vel_gs_sc) / np.linalg.norm(pos_sc2tar_i)
 
-            unit_vec_pos = pos_gs_sc /np.linalg.norm(pos_gs_sc)
-            unit_vec_vel = vel_gs_sc /np.linalg.norm(vel_gs_sc)
+            unit_vec_pos = pos_sc2tar_i / np.linalg.norm(pos_sc2tar_i)
+            unit_vec_vel = vel_gs_sc / np.linalg.norm(vel_gs_sc)
 
             unit_vec_omega_gs_sc = np.cross(unit_vec_pos, unit_vec_vel)
             omega_gs_from_sc_i = mag_omega_gs_sc * unit_vec_omega_gs_sc
@@ -204,11 +204,8 @@ class ADCS(ComponentBase):
             # Vector direction of the Body frame to point to another vector
             self.b_dir = np.array([0, 0, 1])
             # Error
-            current_sideral = gstime(self.dynamics.simtime.current_jd)
-            current_tar_pos_eci_earth = rotationZ(self.tar_pos_ecef, current_sideral)
-            current_tar_s2tar_i = current_tar_pos_eci_earth - self.dynamics.orbit.current_position_i
-            self.b_tar_i = current_tar_s2tar_i / np.linalg.norm(current_tar_s2tar_i)
-            current_tar_pos_b = self.q_i2b_est.frame_conv(current_tar_s2tar_i)
+            self.b_tar_i = pos_sc2tar_i / np.linalg.norm(pos_sc2tar_i)
+            current_tar_pos_b = self.q_i2b_est.frame_conv(pos_sc2tar_i)
             self.b_tar_b = current_tar_pos_b / np.linalg.norm(current_tar_pos_b)
             self.current_theta_e = np.arccos(np.dot(self.b_dir, self.b_tar_b))
             self.vec_u_e = np.cross(self.b_dir, self.b_tar_b)
@@ -239,16 +236,16 @@ class ADCS(ComponentBase):
 
         start_time = time.time()
         # Control MPC
-        control_mag_torque, self.current_cost = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
-                                                                           self.dynamics.attitude.current_omega_b,
-                                                                           self.control_torque], self.dynamics.simtime.current_jd)
+        # control_mag_torque, self.current_cost = self.controller.open_loop([self.dynamics.attitude.current_quaternion_i2b,
+        #                                                                    self.dynamics.attitude.current_omega_b,
+        #                                                                    self.control_torque], self.dynamics.simtime.current_jd)
 
         self.current_calc_time = time.time() - start_time
-        self.control_torque = control_mag_torque
+        # self.control_torque = control_mag_torque
 
         # Control PID
         # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e - self.omega_b_est * 5e-4
-        # self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
+        self.control_torque = 2e-5 * angle_rotation * self.vec_u_e + (self.omega_b_tar - self.omega_b_est) * 5e-4
 
     def calc_mtt_torque(self):
         self.components.mtt.calc_torque(self.control_torque, self.current_magVect_c_magSensor)
