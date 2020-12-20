@@ -11,7 +11,7 @@ from copy import deepcopy, copy
 from Library.math_sup.tools_reference_frame import JdToDecyear
 from Library.igrf.IGRF import calculate_igrf
 from Library.math_sup.Quaternion import Quaternions
-from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef
+from Library.math_sup.tools_reference_frame import rotationY, rotationZ, gstime, geodetic_to_ecef, eci_to_geodetic
 from scipy.optimize import minimize
 from scipy.optimize import Bounds
 from scipy import optimize
@@ -72,6 +72,11 @@ class MPC(object):
         self.mpc_array_sideral      = []
         self.mpc_array_tar_pos_i    = []
         self.mpc_array_tar_pos_sc_i = []
+        self.mpc_array_lat          = []
+        self.mpc_array_lon          = []
+        self.mpc_array_alt          = []
+        self.mpc_array_mag_i        = []
+        self.mpc_array_decyear      = []
 
         # Geodetic to ECEF
         self.tar_pos_ecef = geodetic_to_ecef(tar_alt * 1e-3, tar_long * deg2rad, tar_lat * deg2rad) * 1e3
@@ -96,9 +101,19 @@ class MPC(object):
         self.mpc_array_sc_vel_i = [temp[i][1] for i in range(self.N_pred_horiz)]
         self.mpc_array_sideral = [gstime(elem) for elem in self.mpc_array_jd]
         self.mpc_array_tar_pos_i = [rotationZ(self.tar_pos_ecef, -k_sideral) for k_sideral in self.mpc_array_sideral]
+        self.mpc_array_tar_pos_sc_i = [self.mpc_array_tar_pos_i[i] - self.mpc_array_sc_pos_i[i]
+                                       for i in range(self.N_pred_horiz)]
+        temp = [eci_to_geodetic(self.mpc_array_sc_pos_i[i], self.mpc_array_sideral[i]) for i in range(self.N_pred_horiz)]
+        self.mpc_array_alt = [temp[i][0] for i in range(self.N_pred_horiz)]
+        self.mpc_array_lon = [temp[i][1] for i in range(self.N_pred_horiz)]
+        self.mpc_array_lat = [temp[i][2] for i in range(self.N_pred_horiz)]
 
-        self.mpc_array_tar_pos_sc_i = [self.mpc_array_tar_pos_i[i] - self.mpc_array_sc_pos_i[i] for i in range(self.N_pred_horiz)]
+        # Get Earth magnetic field
+        self.mpc_array_decyear = [JdToDecyear(elem) for elem in self.mpc_array_jd]
 
+        self.mpc_array_mag_i = [self.get_mag_earth_ned(self.mpc_array_decyear[i], self.mpc_array_alt[i],
+                                                       self.mpc_array_lon[i], self.mpc_array_lat[i],
+                                                       self.mpc_array_sideral[i]) for i in range(self.N_pred_horiz)]
         """
         x0 = np.zeros(self.N_pred_horiz-1)
         xl = np.zeros(3*(self.N_pred_horiz-1))
@@ -126,17 +141,13 @@ class MPC(object):
             J += theta_e ** 2 + np.linalg.norm(u[i*3:(i+1)*3]) ** 2 + 10 * np.linalg.norm(omega_tar_b - last_omega_b) ** 2
             current_torque_b = u[i*3:(i+1)*3]
 
+            # Magnetic ECI to Body frame
+            mag_b = last_quaternion_q_i2b.frame_conv(self.mpc_array_mag_i[i])
+
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
                                                                       last_quaternion_q_i2b,
                                                                       current_torque_b)
-
-            # ECI to Geodetic state
-            # alt, long, lat = eci_to_geodetic(current_position_i, current_sideral)
-
-            # Get Earth magnetic field
-            # mag_b = self.get_mag_earth_b(mpc_decyear, alt, long, lat, current_q_i2b, current_sideral)
-            # print(mag_b, ', Paso:', i + 1)
 
             # Error determination
             current_tar_pos_b = current_q_i2b.frame_conv(self.mpc_array_tar_pos_sc_i[i + 1])
@@ -162,6 +173,10 @@ class MPC(object):
         for i in range(self.N_pred_horiz - 1):
             J += theta_e ** 2 + 50 * np.linalg.norm(last_omega_b) ** 2
             current_torque_b = u[i*3:(i+1)*3]
+
+            # Magnetic ECI to Body frame
+            mag_b = last_quaternion_q_i2b.frame_conv(self.mpc_array_mag_i[i])
+
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
                                                                       last_quaternion_q_i2b,
@@ -189,6 +204,10 @@ class MPC(object):
             J += np.linalg.norm(u[i*3:(i+1)*3]) ** 2 + np.linalg.norm(last_omega_b) ** 2
 
             current_torque_b = u[i*3:(i+1)*3]
+
+            # Magnetic ECI to Body frame
+            mag_b = last_quaternion_q_i2b.frame_conv(self.mpc_array_mag_i[i])
+
             # Dynamics update
             current_q_i2b, current_omega_b = self.mpc_update_attitude(last_omega_b,
                                                                       last_quaternion_q_i2b,
@@ -232,7 +251,7 @@ class MPC(object):
         mag_local_yz = rotationZ(mag_local_0y, -lonrad)
         return rotationZ(mag_local_yz, -gmst)
 
-    def get_mag_earth_b(self, mpc_decyear, alt, long, lat, current_q_i2b, current_sideral):
+    def get_mag_earth_ned(self, mpc_decyear, alt, long, lat, current_sideral):
         # Earth magnetic update in NED frame (North East Down)
         alt /= 1000
         """
@@ -244,11 +263,9 @@ class MPC(object):
         x, y, z, f, gccolat = calculate_igrf(0, mpc_decyear, alt, lat, long, itype=1)
         mag_ned = [x, y, z]
 
-        # NED to ECI
+        # NED to ECI magnetic field
         mag_i = self.mag_ned_to_eci(mag_ned, gccolat, long, current_sideral)
-        # Magnetic ECI to Body frame
-        mag_b = current_q_i2b.frame_conv(mag_i)
-        return mag_b
+        return mag_i
 
     def mpc_update_attitude(self, last_omega_b, last_quaternion_q_i2b, last_torque_b):
         q_i2b, omega_b = self.rungeonestep(last_omega_b, last_quaternion_q_i2b, last_torque_b)
